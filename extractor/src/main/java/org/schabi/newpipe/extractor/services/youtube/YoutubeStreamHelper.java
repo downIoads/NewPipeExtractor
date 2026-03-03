@@ -28,6 +28,7 @@ import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.YOUTUBEI_V1_URL;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.generateTParameter;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getAndroidUserAgent;
+import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getAndroidVrUserAgent;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getClientHeaders;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getClientVersion;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getIosUserAgent;
@@ -71,8 +72,11 @@ public final class YoutubeStreamHelper {
         final byte[] body = JsonWriter.string(builder.done())
                 .getBytes(StandardCharsets.UTF_8);
 
+        // Only request metadata fields to avoid "page reload required" errors from YouTube.
+        // The WEB client is used only for metadata, not for streaming URLs.
+        // Requesting playabilityStatus or storyboards can trigger "page reload" errors.
         final String url = YOUTUBEI_V1_URL + PLAYER + "?" + DISABLE_PRETTY_PRINT_PARAMETER
-                + "&$fields=microformat,playabilityStatus,storyboards,videoDetails";
+                + "&$fields=microformat,videoDetails";
 
         return JsonUtils.toJsonObject(getValidJsonResponseBody(
                 getDownloader().postWithContentTypeJson(
@@ -127,21 +131,62 @@ public final class YoutubeStreamHelper {
             @Nonnull final Localization localization,
             @Nonnull final String videoId,
             @Nonnull final String cpn,
-            @Nonnull final PoTokenResult androidPoTokenResult)
+            @Nullable final PoTokenResult androidPoTokenResult)
             throws IOException, ExtractionException {
         final InnertubeClientRequestInfo innertubeClientRequestInfo =
                 InnertubeClientRequestInfo.ofAndroidClient();
-        innertubeClientRequestInfo.clientInfo.visitorData = androidPoTokenResult.visitorData;
 
         final Map<String, List<String>> headers =
                 getMobileClientHeaders(getAndroidUserAgent(localization));
+
+        // We must always pass a valid visitorData to get valid player responses.
+        innertubeClientRequestInfo.clientInfo.visitorData = androidPoTokenResult == null
+                ? YoutubeParsingHelper.getVisitorDataFromInnertube(innertubeClientRequestInfo,
+                        localization, contentCountry, headers, YOUTUBEI_V1_GAPIS_URL, null, false)
+                : androidPoTokenResult.visitorData;
 
         final JsonBuilder<JsonObject> builder = prepareJsonBuilder(localization, contentCountry,
                 innertubeClientRequestInfo, null);
 
         addVideoIdCpnAndOkChecks(builder, videoId, cpn);
 
-        addPoToken(builder, androidPoTokenResult.playerRequestPoToken);
+        if (androidPoTokenResult != null) {
+            addPoToken(builder, androidPoTokenResult.playerRequestPoToken);
+        }
+
+        final byte[] body = JsonWriter.string(builder.done())
+                .getBytes(StandardCharsets.UTF_8);
+
+        final String url = YOUTUBEI_V1_GAPIS_URL + PLAYER + "?" + DISABLE_PRETTY_PRINT_PARAMETER
+                + "&t=" + generateTParameter() + "&id=" + videoId;
+
+        return JsonUtils.toJsonObject(getValidJsonResponseBody(
+                getDownloader().postWithContentTypeJson(url, headers, body, localization)));
+    }
+
+    public static JsonObject getAndroidVrPlayerResponse(
+            @Nonnull final ContentCountry contentCountry,
+            @Nonnull final Localization localization,
+            @Nonnull final String videoId,
+            @Nonnull final String cpn)
+            throws IOException, ExtractionException {
+        final InnertubeClientRequestInfo innertubeClientRequestInfo =
+                InnertubeClientRequestInfo.ofAndroidVrClient();
+
+        final Map<String, List<String>> headers =
+                getMobileClientHeaders(getAndroidVrUserAgent(localization));
+
+        // We must always pass a valid visitorData to get valid player responses.
+        innertubeClientRequestInfo.clientInfo.visitorData =
+                YoutubeParsingHelper.getVisitorDataFromInnertube(innertubeClientRequestInfo,
+                        localization, contentCountry, headers, YOUTUBEI_V1_GAPIS_URL, null, false);
+
+        final JsonBuilder<JsonObject> builder = prepareJsonBuilder(localization, contentCountry,
+                innertubeClientRequestInfo, null);
+
+        addVideoIdCpnAndOkChecks(builder, videoId, cpn);
+
+        // No poToken needed for ANDROID_VR client
 
         final byte[] body = JsonWriter.string(builder.done())
                 .getBytes(StandardCharsets.UTF_8);

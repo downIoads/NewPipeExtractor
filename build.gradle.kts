@@ -12,14 +12,16 @@ allprojects {
 
     version = "v0.25.0"
 
-    tasks.withType<JavaCompile> {
-        options.encoding = Charsets.UTF_8.toString()
-    }
-
     extensions.configure<JavaPluginExtension> {
         toolchain {
-            languageVersion.set(JavaLanguageVersion.of(11))
+            // Use the available toolchain in this workspace; still compile for Java 11.
+            languageVersion.set(JavaLanguageVersion.of(17))
         }
+    }
+
+    tasks.withType<JavaCompile> {
+        options.encoding = Charsets.UTF_8.toString()
+        options.release.set(11)
     }
 }
 

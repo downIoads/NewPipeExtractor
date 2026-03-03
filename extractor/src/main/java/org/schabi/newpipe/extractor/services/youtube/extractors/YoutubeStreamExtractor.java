@@ -117,7 +117,15 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     @Nullable
     private JsonObject androidStreamingData;
     @Nullable
+    private JsonObject androidVrStreamingData;
+    @Nullable
     private JsonObject html5StreamingData;
+    @Nullable
+    private JsonObject androidPlayerResponse;
+    @Nullable
+    private JsonObject androidVrPlayerResponse;
+    @Nullable
+    private JsonObject iosPlayerResponse;
 
     private JsonObject videoPrimaryInfoRenderer;
     private JsonObject videoSecondaryInfoRenderer;
@@ -132,6 +140,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     // three different strings are used.
     private String iosCpn;
     private String androidCpn;
+    private String androidVrCpn;
     private String html5Cpn;
 
     @Nullable
@@ -328,7 +337,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             return Long.parseLong(duration);
         } catch (final Exception e) {
             return getDurationFromFirstAdaptiveFormat(Arrays.asList(
-                    html5StreamingData, androidStreamingData, iosStreamingData));
+                    androidStreamingData, html5StreamingData, iosStreamingData));
         }
     }
 
@@ -622,7 +631,8 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     public String getDashMpdUrl() throws ParsingException {
         assertPageFetched();
 
-        // There is no DASH manifest available with the iOS client
+        // There is no DASH manifest available with the iOS client.
+        // Prefer Android client, fall back to HTML5 (only set for age-restricted embed).
         return getManifestUrl(
                 "dash",
                 Arrays.asList(
@@ -859,6 +869,9 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
         setStreamType();
 
+        // Try ANDROID_VR first - it requires no poTokens and is the most reliable
+        fetchAndroidVrClient(localization, contentCountry, videoId);
+
         final PoTokenResult androidPoTokenResult = noPoTokenProviderSet ? null
                 : poTokenProviderInstance.getAndroidClientPoToken(videoId);
 
@@ -974,20 +987,49 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                     poTokenProviderInstance == null ? null
                             : poTokenProviderInstance.getWebEmbedClientPoToken(videoId));
         } else {
-            checkPlayabilityStatus(playabilityStatus);
+            try {
+                checkPlayabilityStatus(playabilityStatus);
+            } catch (final ContentNotAvailableException e) {
+                if (!isReloadErrorMessage(e.getMessage())
+                        && !isReloadPlayabilityStatus(playabilityStatus)) {
+                    throw e;
+                }
+                System.err.println("YoutubeStreamExtractor: fetchHtml5Client"
+                        + " swallowed reload error: " + e.getMessage());
+            }
         }
+        System.err.println("YoutubeStreamExtractor: fetchHtml5Client done"
+                + " html5StreamingData=" + (html5StreamingData != null ? "set" : "null"));
     }
 
     private static void throwExceptionIfPlayerResponseNotValid(
             @Nonnull final JsonObject webPlayerResponse,
             @Nonnull final String videoId) throws ExtractionException {
+        final String webResponseVideoId = webPlayerResponse
+                .getObject("videoDetails").getString("videoId");
+        final String webStatus = webPlayerResponse
+                .getObject(PLAYABILITY_STATUS).getString("status");
+        System.err.println("YoutubeStreamExtractor: throwExceptionIfPlayerResponseNotValid"
+                + " requestedVideoId=" + videoId
+                + " responseVideoId=" + webResponseVideoId
+                + " status=" + webStatus
+                + " isNotValid=" + isPlayerResponseNotValid(webPlayerResponse, videoId));
         if (isPlayerResponseNotValid(webPlayerResponse, videoId)) {
             // Check the playability status, as private and deleted videos and invalid video
             // IDs do not return the ID provided in the player response
             // When the requested video is playable and a different video ID is returned, it
             // has the OK playability status, meaning the ExtractionException after this check
             // will be thrown
-            checkPlayabilityStatus(webPlayerResponse.getObject(PLAYABILITY_STATUS));
+            final JsonObject playabilityStatus = webPlayerResponse.getObject(PLAYABILITY_STATUS);
+            try {
+                checkPlayabilityStatus(playabilityStatus);
+            } catch (final ContentNotAvailableException e) {
+                if (isReloadErrorMessage(e.getMessage())
+                        || isReloadPlayabilityStatus(playabilityStatus)) {
+                    return;
+                }
+                throw e;
+            }
             throw new ExtractionException("WEB player response is not valid");
         }
     }
@@ -1031,18 +1073,28 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         try {
             androidCpn = generateContentPlaybackNonce();
 
-            final JsonObject androidPlayerResponse;
-            if (androidPoTokenResult == null) {
-                androidPlayerResponse = YoutubeStreamHelper.getAndroidReelPlayerResponse(
-                        contentCountry, localization, videoId, androidCpn);
-            } else {
-                androidPlayerResponse = YoutubeStreamHelper.getAndroidPlayerResponse(
-                        contentCountry, localization, videoId, androidCpn,
-                        androidPoTokenResult);
-            }
+            final JsonObject androidPlayerResponse = YoutubeStreamHelper.getAndroidPlayerResponse(
+                    contentCountry, localization, videoId, androidCpn, androidPoTokenResult);
+
+            final String androidResponseVideoId = androidPlayerResponse
+                    .getObject("videoDetails").getString("videoId");
+            final String androidStatus = androidPlayerResponse
+                    .getObject(PLAYABILITY_STATUS).getString("status");
+            System.err.println("YoutubeStreamExtractor: fetchAndroidClient"
+                    + " requestedVideoId=" + videoId
+                    + " responseVideoId=" + androidResponseVideoId
+                    + " status=" + androidStatus
+                    + " isNotValid=" + isPlayerResponseNotValid(androidPlayerResponse, videoId));
 
             if (!isPlayerResponseNotValid(androidPlayerResponse, videoId)) {
+                this.androidPlayerResponse = androidPlayerResponse;
                 androidStreamingData = androidPlayerResponse.getObject(STREAMING_DATA);
+                System.err.println("YoutubeStreamExtractor: fetchAndroidClient"
+                        + " androidStreamingData isNull=" + (androidStreamingData == null)
+                        + " formats=" + (androidStreamingData != null
+                            ? androidStreamingData.getArray("formats").size() : -1)
+                        + " adaptiveFormats=" + (androidStreamingData != null
+                            ? androidStreamingData.getArray("adaptiveFormats").size() : -1));
 
                 if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
                     playerCaptionsTracklistRenderer =
@@ -1060,6 +1112,48 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         }
     }
 
+    private void fetchAndroidVrClient(@Nonnull final Localization localization,
+                                     @Nonnull final ContentCountry contentCountry,
+                                     @Nonnull final String videoId) {
+        try {
+            androidVrCpn = generateContentPlaybackNonce();
+
+            final JsonObject vrPlayerResponse = YoutubeStreamHelper.getAndroidVrPlayerResponse(
+                    contentCountry, localization, videoId, androidVrCpn);
+
+            final String vrResponseVideoId = vrPlayerResponse
+                    .getObject("videoDetails").getString("videoId");
+            final String vrStatus = vrPlayerResponse
+                    .getObject(PLAYABILITY_STATUS).getString("status");
+            System.err.println("YoutubeStreamExtractor: fetchAndroidVrClient"
+                    + " requestedVideoId=" + videoId
+                    + " responseVideoId=" + vrResponseVideoId
+                    + " status=" + vrStatus
+                    + " isNotValid=" + isPlayerResponseNotValid(vrPlayerResponse, videoId));
+
+            if (!isPlayerResponseNotValid(vrPlayerResponse, videoId)) {
+                this.androidVrPlayerResponse = vrPlayerResponse;
+                androidVrStreamingData = vrPlayerResponse.getObject(STREAMING_DATA);
+                System.err.println("YoutubeStreamExtractor: fetchAndroidVrClient"
+                        + " androidVrStreamingData isNull=" + (androidVrStreamingData == null)
+                        + " formats=" + (androidVrStreamingData != null
+                            ? androidVrStreamingData.getArray("formats").size() : -1)
+                        + " adaptiveFormats=" + (androidVrStreamingData != null
+                            ? androidVrStreamingData.getArray("adaptiveFormats").size() : -1));
+
+                if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
+                    playerCaptionsTracklistRenderer =
+                            vrPlayerResponse.getObject(CAPTIONS)
+                                    .getObject(PLAYER_CAPTIONS_TRACKLIST_RENDERER);
+                }
+                // No poToken needed for ANDROID_VR
+            }
+        } catch (final Exception ignored) {
+            // Ignore exceptions related to ANDROID_VR client fetch or parsing, as it is not
+            // compulsory to play contents (falls back to ANDROID client)
+        }
+    }
+
     private void fetchIosClient(@Nonnull final Localization localization,
                                 @Nonnull final ContentCountry contentCountry,
                                 @Nonnull final String videoId,
@@ -1071,6 +1165,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                     contentCountry, localization, videoId, iosCpn, iosPoTokenResult);
 
             if (!isPlayerResponseNotValid(iosPlayerResponse, videoId)) {
+                this.iosPlayerResponse = iosPlayerResponse;
                 iosStreamingData = iosPlayerResponse.getObject(STREAMING_DATA);
 
                 if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
@@ -1132,6 +1227,32 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 .contains("age");
     }
 
+    private static boolean isReloadPlayabilityStatus(@Nonnull final JsonObject playabilityStatus) {
+        String reason = playabilityStatus.getString("reason", "");
+        if (isNullOrEmpty(reason)) {
+            final JsonArray messages = playabilityStatus.getArray("messages");
+            if (messages != null && !messages.isEmpty()) {
+                reason = messages.getString(0);
+            }
+        }
+
+        if (isNullOrEmpty(reason)) {
+            return false;
+        }
+
+        return isReloadErrorMessage(reason);
+    }
+
+    private static boolean isReloadErrorMessage(@Nullable final String message) {
+        if (isNullOrEmpty(message)) {
+            return false;
+        }
+
+        final String reasonLower = message.toLowerCase(Locale.ROOT);
+        return reasonLower.contains("page needs to be reloaded")
+                || reasonLower.contains("reload");
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
     // Utils
     //////////////////////////////////////////////////////////////////////////*/
@@ -1184,19 +1305,24 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
             java.util.stream.Stream.of(
                     /*
-                    Use the html5StreamingData object first because YouTube should have less
-                    control on HTML5 clients, especially for poTokens
+                    Use androidVrStreamingData first as the primary streaming source.
+                    ANDROID_VR (Oculus Quest 3) requires no poTokens and is the most
+                    reliable client for streaming.
 
-                    The androidStreamingData is used as second way as the Android client extraction
-                    is more likely to break
+                    The androidStreamingData is used as a fallback (requires poToken).
+
+                    The html5StreamingData is only set for age-restricted content (from the
+                    WEB_EMBEDDED_PLAYER client) and is used as a further fallback.
 
                     As iOS streaming data is affected by poTokens and not passing them should lead
-                    to 403 responses, it should be used in the last resort
+                    to 403 responses, it should be used as the last resort.
                      */
-                    new Pair<>(html5StreamingData,
-                            new Pair<>(html5Cpn, html5StreamingUrlsPoToken)),
+                    new Pair<>(androidVrStreamingData,
+                            new Pair<>(androidVrCpn, (String) null)),
                     new Pair<>(androidStreamingData,
                             new Pair<>(androidCpn, androidStreamingUrlsPoToken)),
+                    new Pair<>(html5StreamingData,
+                            new Pair<>(html5Cpn, html5StreamingUrlsPoToken)),
                     new Pair<>(iosStreamingData,
                             new Pair<>(iosCpn, iosStreamingUrlsPoToken)))
                     .flatMap(pair -> getStreamsFromStreamingDataKey(
@@ -1213,8 +1339,13 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                         }
                     });
 
+            System.err.println("YoutubeStreamExtractor: getItags"
+                    + " type=" + streamTypeExceptionMessage
+                    + " count=" + streamList.size());
             return streamList;
         } catch (final Exception e) {
+            System.err.println("YoutubeStreamExtractor: getItags FAILED"
+                    + " type=" + streamTypeExceptionMessage + " err=" + e.getMessage());
             throw new ParsingException(
                     "Could not get " + streamTypeExceptionMessage + " streams", e);
         }
@@ -1501,18 +1632,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     @Override
     public List<Frameset> getFrames() throws ExtractionException {
         try {
-            final JsonObject storyboards = playerResponse.getObject("storyboards");
-            final JsonObject storyboardsRenderer = storyboards.getObject(
-                    storyboards.has("playerLiveStoryboardSpecRenderer")
-                            ? "playerLiveStoryboardSpecRenderer"
-                            : "playerStoryboardSpecRenderer"
-            );
-
-            if (storyboardsRenderer == null) {
-                return Collections.emptyList();
-            }
-
-            final String storyboardsRendererSpec = storyboardsRenderer.getString("spec");
+            final String storyboardsRendererSpec = getStoryboardsRendererSpec();
             if (storyboardsRendererSpec == null) {
                 return Collections.emptyList();
             }
@@ -1556,6 +1676,43 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         } catch (final Exception e) {
             throw new ExtractionException("Could not get frames", e);
         }
+    }
+
+    @Nullable
+    private String getStoryboardsRendererSpec() {
+        String spec = getStoryboardsRendererSpecFrom(playerResponse);
+        if (spec != null) {
+            return spec;
+        }
+        spec = getStoryboardsRendererSpecFrom(androidPlayerResponse);
+        if (spec != null) {
+            return spec;
+        }
+        return getStoryboardsRendererSpecFrom(iosPlayerResponse);
+    }
+
+    @Nullable
+    private static String getStoryboardsRendererSpecFrom(@Nullable final JsonObject response) {
+        if (response == null || !response.has("storyboards")) {
+            return null;
+        }
+
+        final JsonObject storyboards = response.getObject("storyboards");
+        if (storyboards == null) {
+            return null;
+        }
+
+        final JsonObject storyboardsRenderer = storyboards.getObject(
+                storyboards.has("playerLiveStoryboardSpecRenderer")
+                        ? "playerLiveStoryboardSpecRenderer"
+                        : "playerStoryboardSpecRenderer"
+        );
+
+        if (storyboardsRenderer == null) {
+            return null;
+        }
+
+        return storyboardsRenderer.getString("spec");
     }
 
     @Nonnull

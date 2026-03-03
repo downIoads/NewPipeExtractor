@@ -22,11 +22,12 @@ package org.schabi.newpipe.extractor.services.youtube;
 
 import static org.schabi.newpipe.extractor.NewPipe.getDownloader;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.ANDROID_CLIENT_VERSION;
+import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.ANDROID_VR_CLIENT_VERSION;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.DESKTOP_CLIENT_PLATFORM;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.IOS_CLIENT_VERSION;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.IOS_DEVICE_MODEL;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.IOS_USER_AGENT_VERSION;
-import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.TVHTML5_USER_AGENT;
+
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.WEB_CLIENT_ID;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.WEB_CLIENT_NAME;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.WEB_HARDCODED_CLIENT_VERSION;
@@ -178,9 +179,8 @@ public final class YoutubeParsingHelper {
     private static final Pattern C_WEB_PATTERN = Pattern.compile("&c=WEB");
     private static final Pattern C_WEB_EMBEDDED_PLAYER_PATTERN =
             Pattern.compile("&c=WEB_EMBEDDED_PLAYER");
-    private static final Pattern C_TVHTML5_PLAYER_PATTERN =
-            Pattern.compile("&c=TVHTML5");
-    private static final Pattern C_ANDROID_PATTERN = Pattern.compile("&c=ANDROID");
+    private static final Pattern C_ANDROID_PATTERN = Pattern.compile("&c=ANDROID(?!_)");
+    private static final Pattern C_ANDROID_VR_PATTERN = Pattern.compile("&c=ANDROID_VR");
     private static final Pattern C_IOS_PATTERN = Pattern.compile("&c=IOS");
 
     private static final Set<String> GOOGLE_URLS = Set.of("google.", "m.google.", "www.google.");
@@ -1098,6 +1098,21 @@ public final class YoutubeParsingHelper {
     }
 
     /**
+     * Get the user-agent string used as the user-agent for InnerTube requests with the
+     * ANDROID_VR client (Oculus Quest 3).
+     *
+     * @param localization the {@link Localization} to set in the user-agent
+     * @return the ANDROID_VR user-agent
+     */
+    @Nonnull
+    public static String getAndroidVrUserAgent(@Nullable final Localization localization) {
+        return "com.google.android.apps.youtube.vr.oculus/" + ANDROID_VR_CLIENT_VERSION
+                + " (Linux; U; Android 12L; "
+                + (localization != null ? localization : Localization.DEFAULT).getCountryCode()
+                + ") gzip";
+    }
+
+    /**
      * Get the user-agent string used as the user-agent for InnerTube requests with the iOS
      * client.
      *
@@ -1116,17 +1131,6 @@ public final class YoutubeParsingHelper {
                 + "; U; CPU iOS " + IOS_USER_AGENT_VERSION + " like Mac OS X; "
                 + (localization != null ? localization : Localization.DEFAULT).getCountryCode()
                 + ")";
-    }
-
-    /**
-     * Get the user-agent string used as the user-agent for InnerTube requests with the HTML5 TV
-     * client.
-     *
-     * @return the user-agent used for InnerTube requests with the TVHTML5 client
-     */
-    @Nonnull
-    public static String getTvHtml5UserAgent() {
-        return TVHTML5_USER_AGENT;
     }
 
     /**
@@ -1385,17 +1389,6 @@ public final class YoutubeParsingHelper {
     }
 
     /**
-     * Check if the streaming URL is a URL from the YouTube {@code TVHTML5} client.
-     *
-     * @param url the streaming URL on which check if it's a {@code TVHTML5}
-     *            streaming URL.
-     * @return true if it's a {@code TVHTML5} streaming URL, false otherwise
-     */
-    public static boolean isTvHtml5StreamingUrl(@Nonnull final String url) {
-        return Parser.isMatch(C_TVHTML5_PLAYER_PATTERN, url);
-    }
-
-    /**
      * Check if the streaming URL is a URL from the YouTube {@code ANDROID} client.
      *
      * @param url the streaming URL to be checked.
@@ -1403,6 +1396,16 @@ public final class YoutubeParsingHelper {
      */
     public static boolean isAndroidStreamingUrl(@Nonnull final String url) {
         return Parser.isMatch(C_ANDROID_PATTERN, url);
+    }
+
+    /**
+     * Check if the streaming URL is a URL from the YouTube {@code ANDROID_VR} client.
+     *
+     * @param url the streaming URL to be checked.
+     * @return true if it's a {@code ANDROID_VR} streaming URL, false otherwise
+     */
+    public static boolean isAndroidVrStreamingUrl(@Nonnull final String url) {
+        return Parser.isMatch(C_ANDROID_VR_PATTERN, url);
     }
 
     /**
