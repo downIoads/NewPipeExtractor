@@ -42,6 +42,9 @@ public final class YoutubeJavaScriptPlayerManager {
     private static String cachedThrottlingDeobfuscationFunctionName;
     @Nullable
     private static String cachedThrottlingDeobfuscationFunction;
+    @Nullable
+    private static String cachedUnifiedSolverCode;
+    private static boolean unifiedSolverAvailable;
 
     @Nullable
     private static ParsingException throttlingDeobfFuncExtractionEx;
@@ -238,7 +241,21 @@ public final class YoutubeJavaScriptPlayerManager {
             throw throttlingDeobfFuncExtractionEx;
         }
 
-        if (cachedThrottlingDeobfuscationFunction == null) {
+        // Try the unified solver approach first (for newer YouTube player versions where the
+        // standalone n-parameter function no longer exists)
+        if (cachedUnifiedSolverCode == null && !unifiedSolverAvailable
+                && cachedThrottlingDeobfuscationFunction == null) {
+            try {
+                cachedUnifiedSolverCode = YoutubeUnifiedSolverUtils.buildSolverCode(
+                        cachedJavaScriptPlayerCode);
+                unifiedSolverAvailable = true;
+            } catch (final ParsingException ignored) {
+                // Unified solver not available, try old approach below
+            }
+        }
+
+        // Fall back to old regex-based approach if unified solver is not available
+        if (!unifiedSolverAvailable && cachedThrottlingDeobfuscationFunction == null) {
             try {
                 cachedThrottlingDeobfuscationFunctionName =
                         YoutubeThrottlingParameterUtils.getDeobfuscationFunctionName(
@@ -261,10 +278,18 @@ public final class YoutubeJavaScriptPlayerManager {
         }
 
         try {
-            final String deobfuscatedThrottlingParameter = JavaScript.run(
-                    cachedThrottlingDeobfuscationFunction,
-                    cachedThrottlingDeobfuscationFunctionName,
-                    obfuscatedThrottlingParameter);
+            final String deobfuscatedThrottlingParameter;
+            if (unifiedSolverAvailable) {
+                deobfuscatedThrottlingParameter = JavaScript.runCached(
+                        cachedUnifiedSolverCode,
+                        YoutubeUnifiedSolverUtils.SOLVER_FUNCTION_NAME,
+                        obfuscatedThrottlingParameter);
+            } else {
+                deobfuscatedThrottlingParameter = JavaScript.run(
+                        cachedThrottlingDeobfuscationFunction,
+                        cachedThrottlingDeobfuscationFunctionName,
+                        obfuscatedThrottlingParameter);
+            }
 
             if (isNullOrEmpty(deobfuscatedThrottlingParameter)) {
                 throw new IllegalStateException("Extracted n-parameter is empty");
@@ -276,7 +301,6 @@ public final class YoutubeJavaScriptPlayerManager {
             return streamingUrl.replace(
                     obfuscatedThrottlingParameter, deobfuscatedThrottlingParameter);
         } catch (final Exception e) {
-            // This shouldn't happen as the function validity is checked when it is extracted
             throw new ParsingException(
                     "Could not run throttling parameter deobfuscation JavaScript function", e);
         }
@@ -310,8 +334,13 @@ public final class YoutubeJavaScriptPlayerManager {
         cachedSignatureDeobfuscationFunction = null;
         cachedThrottlingDeobfuscationFunctionName = null;
         cachedThrottlingDeobfuscationFunction = null;
+        cachedUnifiedSolverCode = null;
+        unifiedSolverAvailable = false;
         cachedSignatureTimestamp = null;
         clearThrottlingParametersCache();
+
+        // Clear cached JavaScript execution scope
+        JavaScript.clearCachedScope();
 
         // Clear cached extraction exceptions, if applicable
         throttlingDeobfFuncExtractionEx = null;
