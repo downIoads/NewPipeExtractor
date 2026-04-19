@@ -891,6 +891,42 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                         .done())
                 .getBytes(StandardCharsets.UTF_8);
         nextResponse = getJsonPostResponse(NEXT, nextBody, localization);
+
+        // If no client returned any playable formats and at least one client reported an
+        // age-related LOGIN_REQUIRED status, surface it as an AgeRestrictedContentException
+        // so the UI can show a specific message instead of a generic parsing error.
+        final boolean anyFormats = hasPlayableFormats(html5StreamingData)
+                || hasPlayableFormats(androidStreamingData)
+                || hasPlayableFormats(androidVrStreamingData)
+                || hasPlayableFormats(iosStreamingData);
+        if (!anyFormats
+                && (isAgeRestrictedPlayerResponse(playerResponse)
+                    || isAgeRestrictedPlayerResponse(androidPlayerResponse)
+                    || isAgeRestrictedPlayerResponse(androidVrPlayerResponse)
+                    || isAgeRestrictedPlayerResponse(iosPlayerResponse))) {
+            throw new AgeRestrictedContentException(
+                    "This age-restricted video cannot be watched anonymously");
+        }
+    }
+
+    private static boolean hasPlayableFormats(final JsonObject streamingData) {
+        if (streamingData == null) {
+            return false;
+        }
+        return streamingData.getArray("formats").size() > 0
+                || streamingData.getArray("adaptiveFormats").size() > 0;
+    }
+
+    private static boolean isAgeRestrictedPlayerResponse(final JsonObject response) {
+        if (response == null) {
+            return false;
+        }
+        final JsonObject ps = response.getObject(PLAYABILITY_STATUS);
+        if (!"login_required".equalsIgnoreCase(ps.getString("status", ""))) {
+            return false;
+        }
+        final String reason = ps.getString("reason", "");
+        return reason.contains("age") || reason.contains("inappropriate");
     }
 
     private static void checkPlayabilityStatus(@Nonnull final JsonObject playabilityStatus)
