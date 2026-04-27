@@ -1151,6 +1151,11 @@ public final class YoutubeParsingHelper {
             throws ExtractionException, IOException {
         final var headers = getClientInfoHeaders();
         headers.put("Cookie", List.of(generateConsentCookie()));
+        // YouTube blocks the plain WEB client UA without a PoToken; Safari UA is still served.
+        // Mirrors yt-dlp's `web_safari` client.
+        headers.put("User-Agent", List.of(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+                        + "(KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)"));
         return headers;
     }
 
