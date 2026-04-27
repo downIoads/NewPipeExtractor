@@ -55,6 +55,7 @@ import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException;
 import org.schabi.newpipe.extractor.exceptions.ExtractionException;
 import org.schabi.newpipe.extractor.exceptions.ParsingException;
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException;
+import org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException;
 import org.schabi.newpipe.extractor.localization.ContentCountry;
 import org.schabi.newpipe.extractor.localization.Localization;
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo;
@@ -992,8 +993,11 @@ public final class YoutubeParsingHelper {
         }
 
         final String responseBody = response.responseBody();
-        if (responseBody.length() < 50) { // Ensure to have a valid response
-            throw new ParsingException("JSON response is too short");
+        if (responseBody.length() < 50) {
+            // YouTube returns ~empty bodies (e.g. `{}`) when it gates a request as
+            // LOGIN_REQUIRED ("Sign in to confirm you're not a bot"). Surface this as
+            // a sign-in/IP-ban error instead of a generic parse failure.
+            throw new SignInConfirmNotBotException("JSON response is too short");
         }
 
         // Check if the request was redirected to the error page.
