@@ -40,6 +40,13 @@ class YoutubeShortsLockupInfoItemExtractor implements StreamInfoItemExtractor {
 
     YoutubeShortsLockupInfoItemExtractor(@Nonnull final JsonObject shortsLockupViewModel) {
         this.shortsLockupViewModel = shortsLockupViewModel;
+        // final String json = shortsLockupViewModel.toString();
+        // final int chunk = 3000;
+        // for (int i = 0; i < json.length(); i += chunk) {
+        //     System.out.println("[SHORTS_DEBUG] LOCKUP[" + (i / chunk) + "]: "
+        //             + json.substring(i, Math.min(i + chunk, json.length())));
+        // }
+        // System.out.println("[SHORTS_DEBUG] LOCKUP_END (total length=" + json.length() + ")");
     }
 
     @Override

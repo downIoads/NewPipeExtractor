@@ -41,6 +41,13 @@ public class YoutubeReelInfoItemExtractor implements StreamInfoItemExtractor {
 
     public YoutubeReelInfoItemExtractor(@Nonnull final JsonObject reelInfo) {
         this.reelInfo = reelInfo;
+        // final String json = reelInfo.toString();
+        // final int chunk = 3000;
+        // for (int i = 0; i < json.length(); i += chunk) {
+        //     System.out.println("[SHORTS_DEBUG] REEL[" + (i / chunk) + "]: "
+        //             + json.substring(i, Math.min(i + chunk, json.length())));
+        // }
+        // System.out.println("[SHORTS_DEBUG] REEL_END (total length=" + json.length() + ")");
     }
 
     @Override
