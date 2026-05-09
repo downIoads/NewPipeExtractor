@@ -47,6 +47,7 @@ import org.schabi.newpipe.extractor.StreamingService;
 import org.schabi.newpipe.extractor.downloader.Downloader;
 import org.schabi.newpipe.extractor.exceptions.AgeRestrictedContentException;
 import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException;
+import org.schabi.newpipe.extractor.exceptions.ContentNotYetAvailableException;
 import org.schabi.newpipe.extractor.exceptions.ExtractionException;
 import org.schabi.newpipe.extractor.exceptions.GeographicRestrictionException;
 import org.schabi.newpipe.extractor.exceptions.PaidContentException;
@@ -907,6 +908,28 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             throw new AgeRestrictedContentException(
                     "This age-restricted video cannot be watched anonymously");
         }
+
+        // If no client returned any playable formats and at least one client reported a
+        // LIVE_STREAM_OFFLINE status, the content is a scheduled/upcoming livestream that
+        // has not yet started. Surface this as a specific exception so the UI can show a
+        // useful message instead of the generic "Could not parse website".
+        if (!anyFormats
+                && (isLiveStreamOfflinePlayerResponse(playerResponse)
+                    || isLiveStreamOfflinePlayerResponse(androidPlayerResponse)
+                    || isLiveStreamOfflinePlayerResponse(androidVrPlayerResponse)
+                    || isLiveStreamOfflinePlayerResponse(iosPlayerResponse))) {
+            throw new ContentNotYetAvailableException(
+                    "This video is not yet available because it is scheduled"
+                            + " for a future release");
+        }
+    }
+
+    private static boolean isLiveStreamOfflinePlayerResponse(final JsonObject response) {
+        if (response == null) {
+            return false;
+        }
+        return "LIVE_STREAM_OFFLINE".equalsIgnoreCase(
+                response.getObject(PLAYABILITY_STATUS).getString("status", ""));
     }
 
     private static boolean hasPlayableFormats(final JsonObject streamingData) {
