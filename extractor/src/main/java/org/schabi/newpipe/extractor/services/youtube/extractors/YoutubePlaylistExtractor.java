@@ -332,15 +332,125 @@ public class YoutubePlaylistExtractor extends PlaylistExtractor {
     public InfoItemsPage<StreamInfoItem> getInitialPage() throws IOException, ExtractionException {
         final StreamInfoItemsCollector collector = new StreamInfoItemsCollector(getServiceId());
 
-        final JsonArray initialItems = initialBrowseContinuationResponse
-                .getArray("onResponseReceivedActions")
-                .getObject(0)
-                .getObject("reloadContinuationItemsCommand")
-                .getArray("continuationItems");
+        final JsonArray initialItems = findInitialContinuationItems();
 
         collectStreamsFrom(collector, initialItems);
 
+        // The continuation-based request occasionally returns an empty response (YouTube
+        // intermittently strips items, especially for YouTube Music album playlists with
+        // OLAK5uy_ IDs). When that happens, fall back to a plain browse request and parse
+        // items from the legacy "playlistVideoListRenderer.contents" inline structure.
+        if (collector.getItems().isEmpty()) {
+            final long streamCount;
+            try {
+                streamCount = getStreamCount();
+            } catch (final Exception ignored) {
+                return new InfoItemsPage<>(collector, getNextPageFrom(initialItems));
+            }
+
+            if (streamCount > 0) {
+                final JsonArray fallbackItems = fetchInitialItemsViaPlainBrowse();
+                collectStreamsFrom(collector, fallbackItems);
+
+                if (collector.getItems().isEmpty()) {
+                    // Both paths failed: surface as an error instead of misleadingly
+                    // showing "no videos" for a playlist that clearly is not empty.
+                    throw new ParsingException(
+                            "Playlist initial page contained no items but streamCount="
+                                    + streamCount
+                                    + "; continuation response keys="
+                                    + initialBrowseContinuationResponse.keySet()
+                                    + " onResponseReceivedActions[0] keys="
+                                    + initialBrowseContinuationResponse
+                                            .getArray("onResponseReceivedActions")
+                                            .getObject(0)
+                                            .keySet());
+                }
+
+                return new InfoItemsPage<>(collector, getNextPageFrom(fallbackItems));
+            }
+        }
+
         return new InfoItemsPage<>(collector, getNextPageFrom(initialItems));
+    }
+
+    /**
+     * Fall back to fetching the playlist via a plain browse request (without a continuation
+     * token) and return the items found at the legacy
+     * {@code contents.twoColumnBrowseResultsRenderer.tabs[0].tabRenderer.content
+     * .sectionListRenderer.contents[0].itemSectionRenderer.contents[0]
+     * .playlistVideoListRenderer.contents} location.
+     *
+     * <p>Returns an empty array if no items are found.</p>
+     */
+    @Nonnull
+    private JsonArray fetchInitialItemsViaPlainBrowse() throws IOException, ExtractionException {
+        final Localization localization = getExtractorLocalization();
+        final byte[] body = JsonWriter.string(prepareDesktopJsonBuilder(localization,
+                        getExtractorContentCountry())
+                        .value("browseId", "VL" + getId())
+                        .value("params", "wgYCCAA%3D") // Show unavailable videos
+                        .done())
+                .getBytes(StandardCharsets.UTF_8);
+
+        final JsonObject response = getJsonPostResponse("browse", body, localization);
+
+        return response.getObject("contents")
+                .getObject("twoColumnBrowseResultsRenderer")
+                .getArray("tabs")
+                .getObject(0)
+                .getObject("tabRenderer")
+                .getObject("content")
+                .getObject("sectionListRenderer")
+                .getArray("contents")
+                .getObject(0)
+                .getObject("itemSectionRenderer")
+                .getArray("contents")
+                .getObject(0)
+                .getObject("playlistVideoListRenderer")
+                .getArray("contents");
+    }
+
+    /**
+     * Locate the {@code continuationItems} array in the initial browse continuation response,
+     * tolerating variations in the response shape that YouTube sometimes returns.
+     *
+     * <p>The "happy path" is
+     * {@code onResponseReceivedActions[0].reloadContinuationItemsCommand.continuationItems},
+     * but YouTube occasionally:</p>
+     * <ul>
+     *     <li>Returns the items in {@code appendContinuationItemsAction} instead of
+     *         {@code reloadContinuationItemsCommand}.</li>
+     *     <li>Places the items-containing action at a non-zero index (when there is more than
+     *         one entry in {@code onResponseReceivedActions}).</li>
+     * </ul>
+     *
+     * <p>This helper scans every {@code onResponseReceivedActions} entry and returns the first
+     * non-empty {@code continuationItems} array it finds. If none is found an empty array is
+     * returned; the caller is responsible for deciding whether that is an error.</p>
+     */
+    @Nonnull
+    private JsonArray findInitialContinuationItems() {
+        final JsonArray actions = initialBrowseContinuationResponse
+                .getArray("onResponseReceivedActions");
+
+        for (final Object actionObj : actions) {
+            if (!(actionObj instanceof JsonObject)) {
+                continue;
+            }
+            final JsonObject action = (JsonObject) actionObj;
+            for (final String key : action.keySet()) {
+                if (!(action.get(key) instanceof JsonObject)) {
+                    continue;
+                }
+                final JsonArray items = action.getObject(key).getArray("continuationItems");
+                if (!items.isEmpty()) {
+                    return items;
+                }
+            }
+        }
+
+        return new JsonArray();
     }
 
     @Override
