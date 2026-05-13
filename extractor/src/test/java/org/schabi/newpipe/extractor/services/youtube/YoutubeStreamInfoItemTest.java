@@ -3,6 +3,7 @@ package org.schabi.newpipe.extractor.services.youtube;
 import com.grack.nanojson.JsonParser;
 import com.grack.nanojson.JsonParserException;
 import org.junit.jupiter.api.Test;
+import org.schabi.newpipe.extractor.exceptions.ParsingException;
 import org.schabi.newpipe.extractor.localization.Localization;
 import org.schabi.newpipe.extractor.localization.TimeAgoPatternsManager;
 import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamInfoItemExtractor;
@@ -58,6 +59,28 @@ class YoutubeStreamInfoItemTest {
     }
 
     @Test
+    void videoRendererDurationFromAccessibilityLabel()
+            throws JsonParserException, ParsingException {
+        final var json = JsonParser.object().from("{"
+                + "\"thumbnailOverlays\":[{"
+                + "\"thumbnailOverlayTimeStatusRenderer\":{"
+                + "\"text\":{"
+                + "\"accessibility\":{"
+                + "\"accessibilityData\":{"
+                + "\"label\":\"2 minutes, 38 seconds\""
+                + "}"
+                + "}"
+                + "},"
+                + "\"style\":\"DEFAULT\""
+                + "}"
+                + "}]"
+                + "}");
+        final var extractor = new YoutubeStreamInfoItemExtractor(json, null);
+
+        assertEquals(158, extractor.getDuration());
+    }
+
+    @Test
     void lockupViewModelPremiere()
             throws FileNotFoundException, JsonParserException {
         final var json = JsonParser.object().from(new FileInputStream(getMockPath(
@@ -84,5 +107,42 @@ class YoutubeStreamInfoItemTest {
         () -> assertNull(extractor.getShortDescription()),
         () -> assertFalse(extractor.isShortFormContent())
         );
+    }
+
+    @Test
+    void lockupViewModelDurationFromAccessibilityLabel()
+            throws JsonParserException, ParsingException {
+        final var json = JsonParser.object().from("{"
+                + "\"contentImage\":{"
+                + "\"thumbnailViewModel\":{"
+                + "\"overlays\":[{"
+                + "\"thumbnailBottomOverlayViewModel\":{"
+                + "\"badges\":[{"
+                + "\"thumbnailBadgeViewModel\":{"
+                + "\"badgeStyle\":\"THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT\","
+                + "\"rendererContext\":{"
+                + "\"accessibilityContext\":{"
+                + "\"label\":\"1 hour, 2 minutes, 3 seconds\""
+                + "}"
+                + "}"
+                + "}"
+                + "}]"
+                + "}"
+                + "}]"
+                + "}"
+                + "},"
+                + "\"metadata\":{"
+                + "\"lockupMetadataViewModel\":{"
+                + "\"metadata\":{"
+                + "\"contentMetadataViewModel\":{"
+                + "\"metadataRows\":[]"
+                + "}"
+                + "}"
+                + "}"
+                + "}"
+                + "}");
+        final var extractor = new YoutubeStreamInfoItemLockupExtractor(json, null);
+
+        assertEquals(3723, extractor.getDuration());
     }
 }

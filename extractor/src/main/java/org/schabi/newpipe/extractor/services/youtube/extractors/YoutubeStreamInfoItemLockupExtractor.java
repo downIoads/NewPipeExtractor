@@ -24,6 +24,7 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -79,11 +80,7 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
     private StreamType determineStreamType() throws ParsingException {
         if (JsonUtils.getArray(lockupViewModel, "contentImage.thumbnailViewModel.overlays")
             .streamAsJsonObjects()
-            .flatMap(overlay -> overlay
-                .getObject("thumbnailOverlayBadgeViewModel")
-                .getArray("thumbnailBadges")
-                .streamAsJsonObjects())
-            .map(thumbnailBadge -> thumbnailBadge.getObject("thumbnailBadgeViewModel"))
+            .flatMap(YoutubeStreamInfoItemLockupExtractor::getThumbnailBadgeViewModels)
             .anyMatch(thumbnailBadgeViewModel -> {
                 if ("THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE".equals(
                     thumbnailBadgeViewModel.getString("badgeStyle"))) {
@@ -154,13 +151,14 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
         final List<String> potentialDurations = JsonUtils.getArray(lockupViewModel,
                 "contentImage.thumbnailViewModel.overlays")
             .streamAsJsonObjects()
-            .flatMap(jsonObject -> jsonObject
-                .getObject("thumbnailOverlayBadgeViewModel")
-                .getArray("thumbnailBadges")
-                .streamAsJsonObjects())
-            .map(jsonObject -> jsonObject
-                .getObject("thumbnailBadgeViewModel")
-                .getString("text"))
+            .flatMap(YoutubeStreamInfoItemLockupExtractor::getThumbnailBadgeViewModels)
+            .flatMap(thumbnailBadgeViewModel -> Stream.of(
+                thumbnailBadgeViewModel.getString("text"),
+                thumbnailBadgeViewModel
+                    .getObject("rendererContext")
+                    .getObject("accessibilityContext")
+                    .getString("label")))
+            .filter(duration -> !isNullOrEmpty(duration))
             .collect(Collectors.toList());
 
         if (potentialDurations.isEmpty()) {
@@ -177,6 +175,17 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
         }
 
         throw new ParsingException("Could not get duration", parsingException);
+    }
+
+    private static Stream<JsonObject> getThumbnailBadgeViewModels(final JsonObject overlay) {
+        return Stream.concat(
+                overlay.getObject("thumbnailOverlayBadgeViewModel")
+                        .getArray("thumbnailBadges")
+                        .streamAsJsonObjects(),
+                overlay.getObject("thumbnailBottomOverlayViewModel")
+                        .getArray("badges")
+                        .streamAsJsonObjects())
+            .map(badge -> badge.getObject("thumbnailBadgeViewModel"));
     }
 
     @Override

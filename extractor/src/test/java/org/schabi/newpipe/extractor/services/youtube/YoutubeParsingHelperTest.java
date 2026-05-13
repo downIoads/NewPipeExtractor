@@ -30,6 +30,9 @@ public class YoutubeParsingHelperTest implements InitYoutubeTest {
         assertEquals(1162567, YoutubeParsingHelper.parseDurationString("12:34:56:07"));
         assertEquals(4445767, YoutubeParsingHelper.parseDurationString("1,234:56:07"));
         assertEquals(754, YoutubeParsingHelper.parseDurationString("12:34 "));
+        assertEquals(158, YoutubeParsingHelper.parseDurationString("2 minutes, 38 seconds"));
+        assertEquals(3723, YoutubeParsingHelper.parseDurationString(
+                "1 hour, 2 minutes, 3 seconds"));
     }
 
     @Test

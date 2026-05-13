@@ -160,9 +160,15 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
                         .orElse(null);
 
                 if (timeOverlay != null) {
-                    duration = getTextFromObject(
-                            timeOverlay.getObject("thumbnailOverlayTimeStatusRenderer")
-                                    .getObject("text"));
+                    final JsonObject text = timeOverlay
+                            .getObject("thumbnailOverlayTimeStatusRenderer")
+                            .getObject("text");
+                    duration = getTextFromObject(text);
+                    if (isNullOrEmpty(duration)) {
+                        duration = text.getObject("accessibility")
+                                .getObject("accessibilityData")
+                                .getString("label");
+                    }
                 }
             }
 

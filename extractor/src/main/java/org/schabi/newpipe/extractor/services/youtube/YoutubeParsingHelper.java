@@ -76,6 +76,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -183,6 +184,8 @@ public final class YoutubeParsingHelper {
     private static final Pattern C_ANDROID_PATTERN = Pattern.compile("&c=ANDROID(?!_)");
     private static final Pattern C_ANDROID_VR_PATTERN = Pattern.compile("&c=ANDROID_VR");
     private static final Pattern C_IOS_PATTERN = Pattern.compile("&c=IOS");
+    private static final Pattern TEXTUAL_DURATION_PART_PATTERN =
+            Pattern.compile("(\\d+)\\s*(day|hour|minute|second)s?", Pattern.CASE_INSENSITIVE);
 
     private static final Set<String> GOOGLE_URLS = Set.of("google.", "m.google.", "www.google.");
     private static final Set<String> INVIDIOUS_URLS = Set.of("invidio.us", "dev.invidio.us",
@@ -233,12 +236,18 @@ public final class YoutubeParsingHelper {
 
     /**
      * Parses the duration string of the video expecting ":" or "." as separators
+     * or textual English accessibility labels such as "1 hour, 2 minutes, 3 seconds".
      *
      * @return the duration in seconds
      * @throws ParsingException when more than 3 separators are found
      */
     public static int parseDurationString(@Nonnull final String input)
             throws ParsingException, NumberFormatException {
+        final Optional<Integer> textualDuration = parseTextualDurationString(input);
+        if (textualDuration.isPresent()) {
+            return textualDuration.get();
+        }
+
         // If time separator : is not detected, try . instead
         final String[] splitInput = input.contains(":")
                 ? input.split(":")
@@ -278,6 +287,33 @@ public final class YoutubeParsingHelper {
         } catch (final NumberFormatException ex) {
             return 0;
         }
+    }
+
+    private static Optional<Integer> parseTextualDurationString(@Nonnull final String input) {
+        final Matcher matcher = TEXTUAL_DURATION_PART_PATTERN.matcher(input);
+        int duration = 0;
+        boolean found = false;
+        while (matcher.find()) {
+            found = true;
+            final int value = Integer.parseInt(matcher.group(1));
+            switch (matcher.group(2).toLowerCase(Locale.ENGLISH)) {
+                case "day":
+                    duration += value * 24 * 60 * 60;
+                    break;
+                case "hour":
+                    duration += value * 60 * 60;
+                    break;
+                case "minute":
+                    duration += value * 60;
+                    break;
+                case "second":
+                    duration += value;
+                    break;
+                default:
+                    break;
+            }
+        }
+        return found ? Optional.of(duration) : Optional.empty();
     }
 
     @Nonnull
