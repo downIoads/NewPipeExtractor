@@ -761,9 +761,24 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     }
 
     private void setStreamType() {
-        if (playerResponse.getObject(PLAYABILITY_STATUS).has("liveStreamability")) {
+        final JsonObject videoDetails = playerResponse.getObject("videoDetails");
+        final JsonObject liveBroadcastDetails =
+                playerMicroFormatRenderer.getObject("liveBroadcastDetails");
+
+        final boolean hasLiveStreamability =
+                playerResponse.getObject(PLAYABILITY_STATUS).has("liveStreamability");
+        final boolean hasLiveStartTimestamp =
+                !liveBroadcastDetails.getString("startTimestamp", "").isEmpty();
+        final boolean hasLiveEndTimestamp =
+                !liveBroadcastDetails.getString("endTimestamp", "").isEmpty();
+        final boolean isLive = videoDetails.getBoolean("isLive", false)
+                || (hasLiveStartTimestamp && !hasLiveEndTimestamp);
+        final boolean isPostLiveDvr = videoDetails.getBoolean("isPostLiveDvr", false)
+                || hasLiveEndTimestamp;
+
+        if (hasLiveStreamability || isLive) {
             streamType = StreamType.LIVE_STREAM;
-        } else if (playerResponse.getObject("videoDetails").getBoolean("isPostLiveDvr", false)) {
+        } else if (isPostLiveDvr) {
             streamType = StreamType.POST_LIVE_STREAM;
         } else {
             streamType = StreamType.VIDEO_STREAM;
@@ -1132,22 +1147,22 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         try {
             androidCpn = generateContentPlaybackNonce();
 
-            final JsonObject androidPlayerResponse = YoutubeStreamHelper.getAndroidPlayerResponse(
+            final JsonObject androidResponse = YoutubeStreamHelper.getAndroidPlayerResponse(
                     contentCountry, localization, videoId, androidCpn, androidPoTokenResult);
 
-            final String androidResponseVideoId = androidPlayerResponse
+            final String androidResponseVideoId = androidResponse
                     .getObject("videoDetails").getString("videoId");
-            final String androidStatus = androidPlayerResponse
+            final String androidStatus = androidResponse
                     .getObject(PLAYABILITY_STATUS).getString("status");
             System.err.println("YoutubeStreamExtractor: fetchAndroidClient"
                     + " requestedVideoId=" + videoId
                     + " responseVideoId=" + androidResponseVideoId
                     + " status=" + androidStatus
-                    + " isNotValid=" + isPlayerResponseNotValid(androidPlayerResponse, videoId));
+                    + " isNotValid=" + isPlayerResponseNotValid(androidResponse, videoId));
 
-            if (!isPlayerResponseNotValid(androidPlayerResponse, videoId)) {
-                this.androidPlayerResponse = androidPlayerResponse;
-                androidStreamingData = androidPlayerResponse.getObject(STREAMING_DATA);
+            if (!isPlayerResponseNotValid(androidResponse, videoId)) {
+                this.androidPlayerResponse = androidResponse;
+                androidStreamingData = androidResponse.getObject(STREAMING_DATA);
                 System.err.println("YoutubeStreamExtractor: fetchAndroidClient"
                         + " androidStreamingData isNull=" + (androidStreamingData == null)
                         + " formats=" + (androidStreamingData != null
@@ -1157,7 +1172,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
                 if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
                     playerCaptionsTracklistRenderer =
-                            androidPlayerResponse.getObject(CAPTIONS)
+                            androidResponse.getObject(CAPTIONS)
                                     .getObject(PLAYER_CAPTIONS_TRACKLIST_RENDERER);
                 }
 
@@ -1220,15 +1235,15 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         try {
             iosCpn = generateContentPlaybackNonce();
 
-            final JsonObject iosPlayerResponse = YoutubeStreamHelper.getIosPlayerResponse(
+            final JsonObject iosResponse = YoutubeStreamHelper.getIosPlayerResponse(
                     contentCountry, localization, videoId, iosCpn, iosPoTokenResult);
 
-            if (!isPlayerResponseNotValid(iosPlayerResponse, videoId)) {
-                this.iosPlayerResponse = iosPlayerResponse;
-                iosStreamingData = iosPlayerResponse.getObject(STREAMING_DATA);
+            if (!isPlayerResponseNotValid(iosResponse, videoId)) {
+                this.iosPlayerResponse = iosResponse;
+                iosStreamingData = iosResponse.getObject(STREAMING_DATA);
 
                 if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
-                    playerCaptionsTracklistRenderer = iosPlayerResponse.getObject(CAPTIONS)
+                    playerCaptionsTracklistRenderer = iosResponse.getObject(CAPTIONS)
                             .getObject(PLAYER_CAPTIONS_TRACKLIST_RENDERER);
                 }
 
