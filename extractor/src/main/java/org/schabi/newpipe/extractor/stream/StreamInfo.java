@@ -23,8 +23,10 @@ package org.schabi.newpipe.extractor.stream;
 import org.schabi.newpipe.extractor.Image;
 import org.schabi.newpipe.extractor.Info;
 import org.schabi.newpipe.extractor.InfoItem;
+import org.schabi.newpipe.extractor.ListExtractor;
 import org.schabi.newpipe.extractor.MetaInfo;
 import org.schabi.newpipe.extractor.NewPipe;
+import org.schabi.newpipe.extractor.Page;
 import org.schabi.newpipe.extractor.StreamingService;
 import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException;
 import org.schabi.newpipe.extractor.exceptions.ContentNotSupportedException;
@@ -70,6 +72,13 @@ public class StreamInfo extends Info {
     public static StreamInfo getInfo(@Nonnull final StreamingService service,
                                      final String url) throws IOException, ExtractionException {
         return getInfo(service.getStreamExtractor(url));
+    }
+
+    public static ListExtractor.InfoItemsPage<InfoItem> getMoreRelatedItems(
+            @Nonnull final StreamingService service,
+            final String url,
+            final Page page) throws IOException, ExtractionException {
+        return service.getStreamExtractor(url).getRelatedItemsPage(page);
     }
 
     public static StreamInfo getInfo(@Nonnull final StreamExtractor extractor)
@@ -338,6 +347,11 @@ public class StreamInfo extends Info {
 
         streamInfo.setRelatedItems(ExtractorHelper.getRelatedItemsOrLogError(streamInfo,
                 extractor));
+        try {
+            streamInfo.setRelatedItemsNextPage(extractor.getRelatedItemsNextPage());
+        } catch (final Exception e) {
+            streamInfo.addError(e);
+        }
     }
 
     private StreamType streamType;
@@ -372,6 +386,7 @@ public class StreamInfo extends Info {
     private String dashMpdUrl = "";
     private String hlsUrl = "";
     private List<InfoItem> relatedItems = List.of();
+    private Page relatedItemsNextPage;
 
     private long startPosition = 0;
     private List<SubtitlesStream> subtitles = List.of();
@@ -620,6 +635,14 @@ public class StreamInfo extends Info {
 
     public void setRelatedItems(final List<InfoItem> relatedItems) {
         this.relatedItems = relatedItems;
+    }
+
+    public Page getRelatedItemsNextPage() {
+        return relatedItemsNextPage;
+    }
+
+    public void setRelatedItemsNextPage(final Page relatedItemsNextPage) {
+        this.relatedItemsNextPage = relatedItemsNextPage;
     }
 
     /**

@@ -40,9 +40,13 @@ import com.grack.nanojson.JsonObject;
 import com.grack.nanojson.JsonWriter;
 
 import org.schabi.newpipe.extractor.Image;
+import org.schabi.newpipe.extractor.InfoItem;
+import org.schabi.newpipe.extractor.InfoItemExtractor;
+import org.schabi.newpipe.extractor.ListExtractor;
 import org.schabi.newpipe.extractor.MediaFormat;
 import org.schabi.newpipe.extractor.MetaInfo;
 import org.schabi.newpipe.extractor.MultiInfoItemsCollector;
+import org.schabi.newpipe.extractor.Page;
 import org.schabi.newpipe.extractor.StreamingService;
 import org.schabi.newpipe.extractor.downloader.Downloader;
 import org.schabi.newpipe.extractor.exceptions.AgeRestrictedContentException;
@@ -810,49 +814,170 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
         try {
             final MultiInfoItemsCollector collector = new MultiInfoItemsCollector(getServiceId());
-
-            final JsonArray results = nextResponse
-                    .getObject("contents")
-                    .getObject("twoColumnWatchNextResults")
-                    .getObject("secondaryResults")
-                    .getObject("secondaryResults")
-                    .getArray("results");
-
-            final TimeAgoParser timeAgoParser = getTimeAgoParser();
-            results.stream()
-                    .filter(JsonObject.class::isInstance)
-                    .map(JsonObject.class::cast)
-                    .map(result -> {
-                        if (result.has("compactVideoRenderer")) {
-                            return new YoutubeStreamInfoItemExtractor(
-                                    result.getObject("compactVideoRenderer"), timeAgoParser);
-                        } else if (result.has("compactRadioRenderer")) {
-                            return new YoutubeMixOrPlaylistInfoItemExtractor(
-                                    result.getObject("compactRadioRenderer"));
-                        } else if (result.has("compactPlaylistRenderer")) {
-                            return new YoutubeMixOrPlaylistInfoItemExtractor(
-                                    result.getObject("compactPlaylistRenderer"));
-                        } else if (result.has("lockupViewModel")) {
-                            final JsonObject lockupViewModel = result.getObject("lockupViewModel");
-                            final String contentType = lockupViewModel.getString("contentType");
-                            if ("LOCKUP_CONTENT_TYPE_PLAYLIST".equals(contentType)
-                                    || "LOCKUP_CONTENT_TYPE_PODCAST".equals(contentType)) {
-                                return new YoutubeMixOrPlaylistLockupInfoItemExtractor(
-                                        lockupViewModel);
-                            } else if ("LOCKUP_CONTENT_TYPE_VIDEO".equals(contentType)) {
-                                return new YoutubeStreamInfoItemLockupExtractor(
-                                        lockupViewModel, timeAgoParser);
-                            }
-                        }
-                        return null;
-                    })
-                    .filter(Objects::nonNull)
-                    .forEach(collector::commit);
-
+            collectRelatedItemsFrom(collector, getInitialRelatedItems());
             return collector;
         } catch (final Exception e) {
             throw new ParsingException("Could not get related videos", e);
         }
+    }
+
+    @Nullable
+    @Override
+    public Page getRelatedItemsNextPage() throws ExtractionException {
+        assertPageFetched();
+
+        if (getAgeLimit() != NO_AGE_LIMIT) {
+            return null;
+        }
+
+        try {
+            return getNextRelatedItemsPageFrom(getInitialRelatedItems());
+        } catch (final Exception e) {
+            throw new ParsingException("Could not get related videos next page", e);
+        }
+    }
+
+    @Nonnull
+    @Override
+    public ListExtractor.InfoItemsPage<InfoItem> getRelatedItemsPage(final Page page)
+            throws IOException, ExtractionException {
+        if (page == null || isNullOrEmpty(page.getId())) {
+            throw new IllegalArgumentException("Page doesn't have the continuation.");
+        }
+
+        final Localization localization = getExtractorLocalization();
+        final byte[] body = JsonWriter.string(
+                prepareDesktopJsonBuilder(localization, getExtractorContentCountry())
+                        .value("continuation", page.getId())
+                        .done())
+                .getBytes(StandardCharsets.UTF_8);
+        final JsonObject response = getJsonPostResponse(NEXT, body, localization);
+        final JsonArray continuationItems = getRelatedItemsContinuationItems(response);
+
+        final MultiInfoItemsCollector collector = new MultiInfoItemsCollector(getServiceId());
+        collectRelatedItemsFrom(collector, continuationItems);
+        return new ListExtractor.InfoItemsPage<>(collector,
+                getNextRelatedItemsPageFrom(continuationItems));
+    }
+
+    @Nonnull
+    private JsonArray getInitialRelatedItems() {
+        return nextResponse
+                .getObject("contents")
+                .getObject("twoColumnWatchNextResults")
+                .getObject("secondaryResults")
+                .getObject("secondaryResults")
+                .getArray("results");
+    }
+
+    private void collectRelatedItemsFrom(@Nonnull final MultiInfoItemsCollector collector,
+                                         @Nonnull final JsonArray items)
+            throws ParsingException {
+        final TimeAgoParser timeAgoParser = getTimeAgoParser();
+        items.stream()
+                .filter(JsonObject.class::isInstance)
+                .map(JsonObject.class::cast)
+                .map(result -> getRelatedInfoItemExtractor(result, timeAgoParser))
+                .filter(Objects::nonNull)
+                .forEach(collector::commit);
+    }
+
+    @Nullable
+    private InfoItemExtractor getRelatedInfoItemExtractor(
+            @Nonnull final JsonObject result,
+            @Nonnull final TimeAgoParser timeAgoParser) {
+        if (result.has("compactVideoRenderer")) {
+            return new YoutubeStreamInfoItemExtractor(
+                    result.getObject("compactVideoRenderer"), timeAgoParser);
+        } else if (result.has("compactRadioRenderer")) {
+            return new YoutubeMixOrPlaylistInfoItemExtractor(
+                    result.getObject("compactRadioRenderer"));
+        } else if (result.has("compactPlaylistRenderer")) {
+            return new YoutubeMixOrPlaylistInfoItemExtractor(
+                    result.getObject("compactPlaylistRenderer"));
+        } else if (result.has("lockupViewModel")) {
+            final JsonObject lockupViewModel = result.getObject("lockupViewModel");
+            final String contentType = lockupViewModel.getString("contentType");
+            if ("LOCKUP_CONTENT_TYPE_PLAYLIST".equals(contentType)
+                    || "LOCKUP_CONTENT_TYPE_PODCAST".equals(contentType)) {
+                return new YoutubeMixOrPlaylistLockupInfoItemExtractor(lockupViewModel);
+            } else if ("LOCKUP_CONTENT_TYPE_VIDEO".equals(contentType)) {
+                return new YoutubeStreamInfoItemLockupExtractor(lockupViewModel, timeAgoParser);
+            }
+        }
+        return null;
+    }
+
+    @Nonnull
+    private JsonArray getRelatedItemsContinuationItems(@Nonnull final JsonObject response) {
+        for (final String actionsKey : List.of("onResponseReceivedEndpoints",
+                "onResponseReceivedActions", "onResponseReceivedCommands")) {
+            final JsonArray actions = response.getArray(actionsKey);
+            for (int i = actions.size() - 1; i >= 0; i--) {
+                if (!(actions.get(i) instanceof JsonObject)) {
+                    continue;
+                }
+
+                final JsonArray continuationItems = getContinuationItemsFromAction(
+                        actions.getObject(i));
+                if (!continuationItems.isEmpty()) {
+                    return continuationItems;
+                }
+            }
+        }
+
+        return new JsonArray();
+    }
+
+    @Nonnull
+    private JsonArray getContinuationItemsFromAction(@Nonnull final JsonObject action) {
+        if (action.has("reloadContinuationItemsCommand")) {
+            return action.getObject("reloadContinuationItemsCommand")
+                    .getArray("continuationItems");
+        } else if (action.has("appendContinuationItemsAction")) {
+            return action.getObject("appendContinuationItemsAction")
+                    .getArray("continuationItems");
+        }
+
+        return new JsonArray();
+    }
+
+    @Nullable
+    private Page getNextRelatedItemsPageFrom(@Nonnull final JsonArray items)
+            throws ParsingException {
+        if (items.isEmpty()) {
+            return null;
+        }
+
+        final Object lastItem = items.get(items.size() - 1);
+        if (!(lastItem instanceof JsonObject)) {
+            return null;
+        }
+
+        final JsonObject continuationItemRenderer =
+                ((JsonObject) lastItem).getObject("continuationItemRenderer");
+        if (isNullOrEmpty(continuationItemRenderer)) {
+            return null;
+        }
+
+        final String continuation;
+        if (continuationItemRenderer.has("button")) {
+            continuation = continuationItemRenderer.getObject("button")
+                    .getObject("buttonRenderer")
+                    .getObject("command")
+                    .getObject("continuationCommand")
+                    .getString("token");
+        } else {
+            continuation = continuationItemRenderer.getObject("continuationEndpoint")
+                    .getObject("continuationCommand")
+                    .getString("token");
+        }
+
+        if (isNullOrEmpty(continuation)) {
+            return null;
+        }
+
+        return new Page(getUrl(), continuation);
     }
 
     /**

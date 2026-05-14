@@ -25,8 +25,10 @@ import org.schabi.newpipe.extractor.InfoItem;
 import org.schabi.newpipe.extractor.InfoItemsCollector;
 import org.schabi.newpipe.extractor.InfoItemExtractor;
 import org.schabi.newpipe.extractor.Extractor;
+import org.schabi.newpipe.extractor.ListExtractor;
 import org.schabi.newpipe.extractor.MediaFormat;
 import org.schabi.newpipe.extractor.MetaInfo;
+import org.schabi.newpipe.extractor.Page;
 import org.schabi.newpipe.extractor.StreamingService;
 import org.schabi.newpipe.extractor.channel.ChannelExtractor;
 import org.schabi.newpipe.extractor.exceptions.ExtractionException;
@@ -368,6 +370,29 @@ public abstract class StreamExtractor extends Extractor {
     public InfoItemsCollector<? extends InfoItem, ? extends InfoItemExtractor>
     getRelatedItems() throws IOException, ExtractionException {
         return null;
+    }
+
+    /**
+     * Get the next page for {@link #getRelatedItems()}, if the service provides one.
+     *
+     * @return a page that can be passed to {@link #getRelatedItemsPage(Page)}, or {@code null}
+     */
+    @Nullable
+    public Page getRelatedItemsNextPage() throws IOException, ExtractionException {
+        return null;
+    }
+
+    /**
+     * Get more related items for this stream.
+     *
+     * @param page a page returned by {@link #getRelatedItemsNextPage()} or a previous call to this
+     *             method
+     * @return related items for the requested page
+     */
+    @Nonnull
+    public ListExtractor.InfoItemsPage<InfoItem> getRelatedItemsPage(final Page page)
+            throws IOException, ExtractionException {
+        return ListExtractor.InfoItemsPage.emptyPage();
     }
 
     /**
