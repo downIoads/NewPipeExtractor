@@ -115,32 +115,45 @@ public final class YoutubePostLiveStreamDvrDashManifestCreator {
                     POST_LIVE_DVR_STREAMS_CACHE.get(postLiveStreamDvrStreamingUrl)).getSecond();
         }
 
+        // System.err.println("PostLiveDashCreator: enter fromPostLiveStreamDvrStreamingUrl"
+        //         + " targetDurationSec=" + targetDurationSec
+        //         + " durationSecondsFallback=" + durationSecondsFallback
+        //         + " baseUrl=" + postLiveStreamDvrStreamingUrl);
+
         String realPostLiveStreamDvrStreamingUrl = postLiveStreamDvrStreamingUrl;
         final String streamDurationString;
         final String segmentCount;
 
-        if (targetDurationSec <= 0) {
-            throw new CreationException("targetDurationSec value is <= 0: " + targetDurationSec);
-        }
-
         try {
+            final long t0 = System.currentTimeMillis();
             // Try to avoid redirects when streaming the content by saving the latest URL we get
             // from video servers.
             final Response response = getInitializationResponse(realPostLiveStreamDvrStreamingUrl,
                     itagItem, DeliveryType.LIVE);
+            final long elapsed = System.currentTimeMillis() - t0;
             realPostLiveStreamDvrStreamingUrl = response.latestUrl().replace(SQ_0, "")
                     .replace(RN_0, "").replace(ALR_YES, "");
 
             final int responseCode = response.responseCode();
-            if (responseCode != 200) {
+            // System.err.println("PostLiveDashCreator: init response code=" + responseCode
+            //         + " elapsedMs=" + elapsed
+            //         + " latestUrl=" + response.latestUrl());
+            // 206 Partial Content is expected when we use a Range request to avoid pulling
+            // the full segment body (see getInitializationResponse).
+            if (responseCode != 200 && responseCode != 206) {
                 throw new CreationException(
                         "Could not get the initialization sequence: response code " + responseCode);
             }
 
             final Map<String, List<String>> responseHeaders = response.responseHeaders();
-            streamDurationString = responseHeaders.get("X-Head-Time-Millis").get(0);
-            segmentCount = responseHeaders.get("X-Head-Seqnum").get(0);
-        } catch (final IndexOutOfBoundsException e) {
+            final List<String> timeMillisList = responseHeaders.get("X-Head-Time-Millis");
+            final List<String> seqNumList = responseHeaders.get("X-Head-Seqnum");
+            // System.err.println("PostLiveDashCreator: X-Head-Time-Millis=" + timeMillisList
+            //         + " X-Head-Seqnum=" + seqNumList
+            //         + " allHeaderKeys=" + responseHeaders.keySet());
+            streamDurationString = timeMillisList.get(0);
+            segmentCount = seqNumList.get(0);
+        } catch (final IndexOutOfBoundsException | NullPointerException e) {
             throw new CreationException(
                     "Could not get the value of the X-Head-Time-Millis or the X-Head-Seqnum header",
                     e);
@@ -157,13 +170,38 @@ public final class YoutubePostLiveStreamDvrDashManifestCreator {
             streamDuration = durationSecondsFallback;
         }
 
+        // YouTube sometimes omits targetDurationSec from formatData for ended livestreams, so
+        // ItagItem.getTargetDurationSec() returns -1. Derive an average segment duration from the
+        // authoritative X-Head-Time-Millis / X-Head-Seqnum response headers instead of failing.
+        int effectiveTargetDurationSec = targetDurationSec;
+        if (effectiveTargetDurationSec <= 0) {
+            try {
+                final long segCountLong = Long.parseLong(segmentCount);
+                if (segCountLong > 0 && streamDuration > 0) {
+                    effectiveTargetDurationSec = (int) Math.max(1, Math.round(
+                            (double) streamDuration / 1000.0 / (double) segCountLong));
+                }
+            } catch (final NumberFormatException ignored) {
+                // fall through to the throw below
+            }
+            // System.err.println("PostLiveDashCreator: derived targetDurationSec="
+            //         + effectiveTargetDurationSec
+            //         + " from streamDuration=" + streamDuration
+            //         + " segmentCount=" + segmentCount);
+            if (effectiveTargetDurationSec <= 0) {
+                throw new CreationException("targetDurationSec is <= 0 and could not be derived "
+                        + "from response headers (streamDuration=" + streamDuration
+                        + ", segmentCount=" + segmentCount + ")");
+            }
+        }
+
         final Document doc = generateDocumentAndDoCommonElementsGeneration(itagItem,
                 streamDuration);
 
         generateSegmentTemplateElement(doc, realPostLiveStreamDvrStreamingUrl,
                 DeliveryType.LIVE);
         generateSegmentTimelineElement(doc);
-        generateSegmentElementForPostLiveDvrStreams(doc, targetDurationSec, segmentCount);
+        generateSegmentElementForPostLiveDvrStreams(doc, effectiveTargetDurationSec, segmentCount);
 
         return buildAndCacheResult(postLiveStreamDvrStreamingUrl, doc,
                 POST_LIVE_DVR_STREAMS_CACHE);

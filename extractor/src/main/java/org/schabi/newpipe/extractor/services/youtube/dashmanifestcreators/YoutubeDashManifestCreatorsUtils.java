@@ -1,9 +1,11 @@
 package org.schabi.newpipe.extractor.services.youtube.dashmanifestcreators;
 
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getAndroidUserAgent;
+import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getAndroidVrUserAgent;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getIosUserAgent;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getOriginReferrerHeaders;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isAndroidStreamingUrl;
+import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isAndroidVrStreamingUrl;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isIosStreamingUrl;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isWebStreamingUrl;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isWebEmbeddedPlayerStreamingUrl;
@@ -606,6 +608,13 @@ public final class YoutubeDashManifestCreatorsUtils {
                 || isWebEmbeddedPlayerStreamingUrl(baseStreamingUrl);
         final boolean isAndroidStreamingUrl = isAndroidStreamingUrl(baseStreamingUrl);
         final boolean isIosStreamingUrl = isIosStreamingUrl(baseStreamingUrl);
+        final boolean isAndroidVrStreamingUrl = isAndroidVrStreamingUrl(baseStreamingUrl);
+        // System.err.println("getInitializationResponse: isHtml5=" + isHtml5StreamingUrl
+        //         + " isAndroid=" + isAndroidStreamingUrl
+        //         + " isIos=" + isIosStreamingUrl
+        //         + " isAndroidVr=" + isAndroidVrStreamingUrl
+        //         + " deliveryType=" + deliveryType
+        //         + " url=" + baseStreamingUrl);
         if (isHtml5StreamingUrl) {
             baseStreamingUrl += ALR_YES;
         }
@@ -613,26 +622,45 @@ public final class YoutubeDashManifestCreatorsUtils {
 
         final Downloader downloader = NewPipe.getDownloader();
         if (isHtml5StreamingUrl) {
-            final String mimeTypeExpected = itagItem.getMediaFormat().getMimeType();
+            final String mimeTypeExpected = itagItem.getMediaFormat() == null
+                    ? null : itagItem.getMediaFormat().getMimeType();
+            // System.err.println("getInitializationResponse: html5 path, mimeTypeExpected="
+            //         + mimeTypeExpected);
             if (!isNullOrEmpty(mimeTypeExpected)) {
                 return getStreamingWebUrlWithoutRedirects(downloader, baseStreamingUrl,
                         mimeTypeExpected);
             }
         } else if (isAndroidStreamingUrl || isIosStreamingUrl) {
+            // For ANDROID / IOS clients, POSTing with an empty body returns just the metadata
+            // headers (X-Head-Time-Millis, X-Head-Seqnum) without streaming the segment body.
             try {
                 final var headers = Map.of("User-Agent",
                         List.of(isAndroidStreamingUrl ? getAndroidUserAgent(null)
                                 : getIosUserAgent(null)));
                 final byte[] emptyBody = "".getBytes(StandardCharsets.UTF_8);
+                // System.err.println("getInitializationResponse: mobile POST path client="
+                //         + (isAndroidStreamingUrl ? "ANDROID" : "IOS"));
                 return downloader.post(baseStreamingUrl, headers, emptyBody);
             } catch (final IOException | ExtractionException e) {
                 throw new CreationException("Could not get the "
-                        + (isIosStreamingUrl ? "ANDROID" : "IOS") + " streaming URL response", e);
+                        + (isIosStreamingUrl ? "IOS" : "ANDROID")
+                        + " streaming URL response", e);
             }
         }
 
+        // For ANDROID_VR (and any other unrecognized client URL), the POST-with-empty-body
+        // trick does not work — YouTube streams back the full segment. Instead, send a
+        // GET with `Range: bytes=0-0` so the server returns just one byte while still
+        // including the metadata headers we need. Response code will be 206 Partial Content.
         try {
-            return downloader.get(baseStreamingUrl);
+            final Map<String, List<String>> headers = new HashMap<>();
+            headers.put("Range", List.of("bytes=0-0"));
+            if (isAndroidVrStreamingUrl) {
+                headers.put("User-Agent", List.of(getAndroidVrUserAgent(null)));
+            }
+            // System.err.println("getInitializationResponse: range-GET path client="
+            //         + (isAndroidVrStreamingUrl ? "ANDROID_VR" : "UNKNOWN"));
+            return downloader.get(baseStreamingUrl, headers);
         } catch (final IOException | ExtractionException e) {
             throw new CreationException("Could not get the streaming URL response", e);
         }

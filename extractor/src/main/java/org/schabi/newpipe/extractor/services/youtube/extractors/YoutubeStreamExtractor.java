@@ -771,10 +771,24 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 !liveBroadcastDetails.getString("startTimestamp", "").isEmpty();
         final boolean hasLiveEndTimestamp =
                 !liveBroadcastDetails.getString("endTimestamp", "").isEmpty();
-        final boolean isLive = videoDetails.getBoolean("isLive", false)
+        final boolean videoDetailsIsLive = videoDetails.getBoolean("isLive", false);
+        final boolean videoDetailsIsPostLiveDvr =
+                videoDetails.getBoolean("isPostLiveDvr", false);
+        final boolean isLive = videoDetailsIsLive
                 || (hasLiveStartTimestamp && !hasLiveEndTimestamp);
-        final boolean isPostLiveDvr = videoDetails.getBoolean("isPostLiveDvr", false)
-                || hasLiveEndTimestamp;
+        // Only treat as POST_LIVE_STREAM when YouTube itself marks it as a post-live DVR stream
+        // (i.e. the DVR window is still open and the content is served as DASH segments). Videos
+        // whose live broadcast merely ended in the past are commonly re-encoded into a regular
+        // progressive MP4 — those must go through the VIDEO_STREAM path, otherwise the DASH
+        // manifest creator tries to fetch a segment whose body is the entire video file.
+        final boolean isPostLiveDvr = videoDetailsIsPostLiveDvr;
+
+        // System.err.println("setStreamType: hasLiveStreamability=" + hasLiveStreamability
+        //         + " hasLiveStartTimestamp=" + hasLiveStartTimestamp
+        //         + " hasLiveEndTimestamp=" + hasLiveEndTimestamp
+        //         + " videoDetails.isLive=" + videoDetailsIsLive
+        //         + " videoDetails.isPostLiveDvr=" + videoDetailsIsPostLiveDvr
+        //         + " => isLive=" + isLive + " isPostLiveDvr=" + isPostLiveDvr);
 
         if (hasLiveStreamability || isLive) {
             streamType = StreamType.LIVE_STREAM;
@@ -1068,12 +1082,12 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                         && !isReloadPlayabilityStatus(playabilityStatus)) {
                     throw e;
                 }
-                System.err.println("YoutubeStreamExtractor: fetchHtml5Client"
-                        + " swallowed reload error: " + e.getMessage());
+                // System.err.println("YoutubeStreamExtractor: fetchHtml5Client"
+                //         + " swallowed reload error: " + e.getMessage());
             }
         }
-        System.err.println("YoutubeStreamExtractor: fetchHtml5Client done"
-                + " html5StreamingData=" + (html5StreamingData != null ? "set" : "null"));
+        // System.err.println("YoutubeStreamExtractor: fetchHtml5Client done"
+        //         + " html5StreamingData=" + (html5StreamingData != null ? "set" : "null"));
     }
 
     private static void throwExceptionIfPlayerResponseNotValid(
@@ -1083,11 +1097,11 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 .getObject("videoDetails").getString("videoId");
         final String webStatus = webPlayerResponse
                 .getObject(PLAYABILITY_STATUS).getString("status");
-        System.err.println("YoutubeStreamExtractor: throwExceptionIfPlayerResponseNotValid"
-                + " requestedVideoId=" + videoId
-                + " responseVideoId=" + webResponseVideoId
-                + " status=" + webStatus
-                + " isNotValid=" + isPlayerResponseNotValid(webPlayerResponse, videoId));
+        // System.err.println("YoutubeStreamExtractor: throwExceptionIfPlayerResponseNotValid"
+        //         + " requestedVideoId=" + videoId
+        //         + " responseVideoId=" + webResponseVideoId
+        //         + " status=" + webStatus
+        //         + " isNotValid=" + isPlayerResponseNotValid(webPlayerResponse, videoId));
         if (isPlayerResponseNotValid(webPlayerResponse, videoId)) {
             // Check the playability status, as private and deleted videos and invalid video
             // IDs do not return the ID provided in the player response
@@ -1154,21 +1168,21 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                     .getObject("videoDetails").getString("videoId");
             final String androidStatus = androidResponse
                     .getObject(PLAYABILITY_STATUS).getString("status");
-            System.err.println("YoutubeStreamExtractor: fetchAndroidClient"
-                    + " requestedVideoId=" + videoId
-                    + " responseVideoId=" + androidResponseVideoId
-                    + " status=" + androidStatus
-                    + " isNotValid=" + isPlayerResponseNotValid(androidResponse, videoId));
+            // System.err.println("YoutubeStreamExtractor: fetchAndroidClient"
+            //         + " requestedVideoId=" + videoId
+            //         + " responseVideoId=" + androidResponseVideoId
+            //         + " status=" + androidStatus
+            //         + " isNotValid=" + isPlayerResponseNotValid(androidResponse, videoId));
 
             if (!isPlayerResponseNotValid(androidResponse, videoId)) {
                 this.androidPlayerResponse = androidResponse;
                 androidStreamingData = androidResponse.getObject(STREAMING_DATA);
-                System.err.println("YoutubeStreamExtractor: fetchAndroidClient"
-                        + " androidStreamingData isNull=" + (androidStreamingData == null)
-                        + " formats=" + (androidStreamingData != null
-                            ? androidStreamingData.getArray("formats").size() : -1)
-                        + " adaptiveFormats=" + (androidStreamingData != null
-                            ? androidStreamingData.getArray("adaptiveFormats").size() : -1));
+                // System.err.println("YoutubeStreamExtractor: fetchAndroidClient"
+                //         + " androidStreamingData isNull=" + (androidStreamingData == null)
+                //         + " formats=" + (androidStreamingData != null
+                //             ? androidStreamingData.getArray("formats").size() : -1)
+                //         + " adaptiveFormats=" + (androidStreamingData != null
+                //             ? androidStreamingData.getArray("adaptiveFormats").size() : -1));
 
                 if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
                     playerCaptionsTracklistRenderer =
@@ -1199,21 +1213,21 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                     .getObject("videoDetails").getString("videoId");
             final String vrStatus = vrPlayerResponse
                     .getObject(PLAYABILITY_STATUS).getString("status");
-            System.err.println("YoutubeStreamExtractor: fetchAndroidVrClient"
-                    + " requestedVideoId=" + videoId
-                    + " responseVideoId=" + vrResponseVideoId
-                    + " status=" + vrStatus
-                    + " isNotValid=" + isPlayerResponseNotValid(vrPlayerResponse, videoId));
+            // System.err.println("YoutubeStreamExtractor: fetchAndroidVrClient"
+            //         + " requestedVideoId=" + videoId
+            //         + " responseVideoId=" + vrResponseVideoId
+            //         + " status=" + vrStatus
+            //         + " isNotValid=" + isPlayerResponseNotValid(vrPlayerResponse, videoId));
 
             if (!isPlayerResponseNotValid(vrPlayerResponse, videoId)) {
                 this.androidVrPlayerResponse = vrPlayerResponse;
                 androidVrStreamingData = vrPlayerResponse.getObject(STREAMING_DATA);
-                System.err.println("YoutubeStreamExtractor: fetchAndroidVrClient"
-                        + " androidVrStreamingData isNull=" + (androidVrStreamingData == null)
-                        + " formats=" + (androidVrStreamingData != null
-                            ? androidVrStreamingData.getArray("formats").size() : -1)
-                        + " adaptiveFormats=" + (androidVrStreamingData != null
-                            ? androidVrStreamingData.getArray("adaptiveFormats").size() : -1));
+                // System.err.println("YoutubeStreamExtractor: fetchAndroidVrClient"
+                //         + " androidVrStreamingData isNull=" + (androidVrStreamingData == null)
+                //         + " formats=" + (androidVrStreamingData != null
+                //             ? androidVrStreamingData.getArray("formats").size() : -1)
+                //         + " adaptiveFormats=" + (androidVrStreamingData != null
+                //             ? androidVrStreamingData.getArray("adaptiveFormats").size() : -1));
 
                 if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
                     playerCaptionsTracklistRenderer =
@@ -1413,13 +1427,13 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                         }
                     });
 
-            System.err.println("YoutubeStreamExtractor: getItags"
-                    + " type=" + streamTypeExceptionMessage
-                    + " count=" + streamList.size());
+            // System.err.println("YoutubeStreamExtractor: getItags"
+            //         + " type=" + streamTypeExceptionMessage
+            //         + " count=" + streamList.size());
             return streamList;
         } catch (final Exception e) {
-            System.err.println("YoutubeStreamExtractor: getItags FAILED"
-                    + " type=" + streamTypeExceptionMessage + " err=" + e.getMessage());
+            // System.err.println("YoutubeStreamExtractor: getItags FAILED"
+            //         + " type=" + streamTypeExceptionMessage + " err=" + e.getMessage());
             throw new ParsingException(
                     "Could not get " + streamTypeExceptionMessage + " streams", e);
         }
