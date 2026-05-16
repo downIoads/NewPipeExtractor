@@ -1076,6 +1076,37 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                     "This video is not yet available because it is scheduled"
                             + " for a future release");
         }
+
+        // If no client returned any playable formats and at least one client reported an
+        // UNPLAYABLE / ERROR status (e.g. private, removed, region-blocked, unlisted-and-
+        // unavailable), surface it as a ContentNotAvailableException so the UI shows
+        // "Video unavailable" instead of the misleading generic "Could not parse website".
+        // We run this last because UNPLAYABLE is YouTube's catch-all and we want the more
+        // specific exceptions above (age-restricted, scheduled) to win when applicable.
+        if (!anyFormats) {
+            final String unplayableReason = firstUnplayableReason(playerResponse,
+                    androidPlayerResponse, androidVrPlayerResponse, iosPlayerResponse);
+            if (unplayableReason != null) {
+                throw new ContentNotAvailableException(unplayableReason);
+            }
+        }
+    }
+
+    @Nullable
+    private static String firstUnplayableReason(final JsonObject... responses) {
+        for (final JsonObject response : responses) {
+            if (response == null) {
+                continue;
+            }
+            final JsonObject ps = response.getObject(PLAYABILITY_STATUS);
+            final String status = ps.getString("status", "");
+            if ("UNPLAYABLE".equalsIgnoreCase(status)
+                    || "ERROR".equalsIgnoreCase(status)) {
+                final String reason = ps.getString("reason", "");
+                return reason.isEmpty() ? "This video is not available" : reason;
+            }
+        }
+        return null;
     }
 
     private static boolean isLiveStreamOfflinePlayerResponse(final JsonObject response) {
