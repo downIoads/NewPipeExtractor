@@ -4,6 +4,7 @@ import static org.schabi.newpipe.extractor.utils.Utils.isNullOrEmpty;
 
 import com.grack.nanojson.JsonArray;
 import com.grack.nanojson.JsonObject;
+// import com.grack.nanojson.JsonWriter; // Uncomment together with the debug log below
 
 import org.schabi.newpipe.extractor.Image;
 import org.schabi.newpipe.extractor.exceptions.ParsingException;
@@ -317,7 +318,18 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
             return -1;
         }
 
-        final Optional<String> optTextContent = metadataPart(1, 0)
+        // Debug helper: uncomment (and the JsonWriter import above) to inspect the metadata row
+        // layout when investigating lockup-related parsing issues, e.g. videos appearing as
+        // "members only" because the views/date row could not be located.
+        // try {
+        //     final JsonArray rows = JsonUtils.getArray(lockupViewModel,
+        //         "metadata.lockupMetadataViewModel.metadata"
+        //             + ".contentMetadataViewModel.metadataRows");
+        //     System.out.println("LOCKUP_DEBUG rows=" + JsonWriter.string(rows));
+        // } catch (final Exception ignored) {
+        // }
+
+        final Optional<String> optTextContent = metadataPart(viewsAndDateRowIndex(), 0)
             .map(this::getTextContentFromMetadataPart);
         // We could do this inline if the ParsingException would be a RuntimeException -.-
         if (optTextContent.isPresent()) {
@@ -406,10 +418,27 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
 
     private Optional<String> getDateText() throws ParsingException {
         if (cachedDateText == null) {
-            cachedDateText = metadataPart(1, 1)
+            cachedDateText = metadataPart(viewsAndDateRowIndex(), 1)
                     .map(this::getTextContentFromMetadataPart);
         }
         return cachedDateText;
+    }
+
+    /**
+     * The metadata row layout differs between contexts:
+     * <ul>
+     *     <li>Related videos: row 0 = uploader, row 1 = views + date</li>
+     *     <li>Channel video tab: only one row containing views + date (the uploader row is
+     *         omitted because the channel is the page itself)</li>
+     * </ul>
+     */
+    private int viewsAndDateRowIndex() throws ParsingException {
+        if (cachedMetadataRows == null) {
+            cachedMetadataRows = JsonUtils.getArray(lockupViewModel,
+                "metadata.lockupMetadataViewModel.metadata"
+                    + ".contentMetadataViewModel.metadataRows");
+        }
+        return cachedMetadataRows.size() <= 1 ? 0 : 1;
     }
 
     private boolean isPremiere() throws ParsingException {
