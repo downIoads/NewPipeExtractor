@@ -3,6 +3,7 @@ package org.schabi.newpipe.extractor.services.youtube.extractors;
 import com.grack.nanojson.JsonArray;
 import com.grack.nanojson.JsonObject;
 import com.grack.nanojson.JsonWriter;
+import org.schabi.newpipe.extractor.Image;
 import org.schabi.newpipe.extractor.InfoItem;
 import org.schabi.newpipe.extractor.MultiInfoItemsCollector;
 import org.schabi.newpipe.extractor.Page;
@@ -288,6 +289,10 @@ public class YoutubeChannelTabExtractor extends ChannelTabExtractor {
             } else if (richItem.has("playlistRenderer")) {
                 commitPlaylist(collector, richItem.getObject("playlistRenderer"),
                         channelVerifiedStatus, channelName, channelUrl);
+            } else if (richItem.has("lockupViewModel")) {
+                commitLockupViewModel(collector, timeAgoParser,
+                        richItem.getObject("lockupViewModel"), channelVerifiedStatus,
+                        channelName, channelUrl);
             }
         } else if (item.has("gridVideoRenderer")) {
             commitVideo(collector, timeAgoParser, item.getObject("gridVideoRenderer"),
@@ -312,21 +317,30 @@ public class YoutubeChannelTabExtractor extends ChannelTabExtractor {
             return collectItemsFrom(collector, item.getObject("expandedShelfContentsRenderer")
                     .getArray("items"), channelVerifiedStatus, channelName, channelUrl);
         } else if (item.has("lockupViewModel")) {
-            final JsonObject lockupViewModel = item.getObject("lockupViewModel");
-            final String contentType = lockupViewModel.getString("contentType");
-            if ("LOCKUP_CONTENT_TYPE_PLAYLIST".equals(contentType)
-                    || "LOCKUP_CONTENT_TYPE_PODCAST".equals(contentType)) {
-                commitPlaylistLockup(collector, lockupViewModel, channelVerifiedStatus,
-                        channelName, channelUrl);
-            } else if ("LOCKUP_CONTENT_TYPE_VIDEO".equals(contentType)) {
-                commitVideoLockup(collector, timeAgoParser, lockupViewModel, channelVerifiedStatus,
-                        channelName, channelUrl);
-            }
+            commitLockupViewModel(collector, timeAgoParser, item.getObject("lockupViewModel"),
+                    channelVerifiedStatus, channelName, channelUrl);
         } else if (item.has("continuationItemRenderer")) {
             return Optional.ofNullable(item.getObject("continuationItemRenderer"));
         }
 
         return Optional.empty();
+    }
+
+    private static void commitLockupViewModel(@Nonnull final MultiInfoItemsCollector collector,
+                                              @Nonnull final TimeAgoParser timeAgoParser,
+                                              @Nonnull final JsonObject lockupViewModel,
+                                              @Nonnull final VerifiedStatus channelVerifiedStatus,
+                                              @Nullable final String channelName,
+                                              @Nullable final String channelUrl) {
+        final String contentType = lockupViewModel.getString("contentType");
+        if ("LOCKUP_CONTENT_TYPE_PLAYLIST".equals(contentType)
+                || "LOCKUP_CONTENT_TYPE_PODCAST".equals(contentType)) {
+            commitPlaylistLockup(collector, lockupViewModel, channelVerifiedStatus,
+                    channelName, channelUrl);
+        } else if ("LOCKUP_CONTENT_TYPE_VIDEO".equals(contentType)) {
+            commitVideoLockup(collector, timeAgoParser, lockupViewModel, channelVerifiedStatus,
+                    channelName, channelUrl);
+        }
     }
 
     private static void commitReel(@Nonnull final MultiInfoItemsCollector collector,
@@ -344,6 +358,12 @@ public class YoutubeChannelTabExtractor extends ChannelTabExtractor {
                     @Override
                     public String getUploaderUrl() throws ParsingException {
                         return isNullOrEmpty(channelUrl) ? super.getUploaderName() : channelUrl;
+                    }
+
+                    @Nonnull
+                    @Override
+                    public List<Image> getUploaderAvatars() throws ParsingException {
+                        return isNullOrEmpty(channelUrl) ? super.getUploaderAvatars() : List.of();
                     }
 
                     @Override
@@ -368,6 +388,12 @@ public class YoutubeChannelTabExtractor extends ChannelTabExtractor {
                     @Override
                     public String getUploaderUrl() throws ParsingException {
                         return isNullOrEmpty(channelUrl) ? super.getUploaderName() : channelUrl;
+                    }
+
+                    @Nonnull
+                    @Override
+                    public List<Image> getUploaderAvatars() throws ParsingException {
+                        return isNullOrEmpty(channelUrl) ? super.getUploaderAvatars() : List.of();
                     }
 
                     @Override
@@ -395,6 +421,12 @@ public class YoutubeChannelTabExtractor extends ChannelTabExtractor {
                         return isNullOrEmpty(channelUrl) ? super.getUploaderName() : channelUrl;
                     }
 
+                    @Nonnull
+                    @Override
+                    public List<Image> getUploaderAvatars() throws ParsingException {
+                        return isNullOrEmpty(channelUrl) ? super.getUploaderAvatars() : List.of();
+                    }
+
                     @Override
                     public boolean isUploaderVerified() {
                         return channelVerifiedStatus == VerifiedStatus.VERIFIED;
@@ -402,11 +434,11 @@ public class YoutubeChannelTabExtractor extends ChannelTabExtractor {
                 });
     }
 
-    private void commitPlaylistLockup(@Nonnull final MultiInfoItemsCollector collector,
-                                      @Nonnull final JsonObject playlistLockupViewModel,
-                                      @Nonnull final VerifiedStatus channelVerifiedStatus,
-                                      @Nullable final String channelName,
-                                      @Nullable final String channelUrl) {
+    private static void commitPlaylistLockup(@Nonnull final MultiInfoItemsCollector collector,
+                                             @Nonnull final JsonObject playlistLockupViewModel,
+                                             @Nonnull final VerifiedStatus channelVerifiedStatus,
+                                             @Nullable final String channelName,
+                                             @Nullable final String channelUrl) {
         collector.commit(
                 new YoutubeMixOrPlaylistLockupInfoItemExtractor(playlistLockupViewModel) {
                     @Override
