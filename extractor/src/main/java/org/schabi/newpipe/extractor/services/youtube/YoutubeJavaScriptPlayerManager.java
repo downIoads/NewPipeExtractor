@@ -225,10 +225,15 @@ public final class YoutubeJavaScriptPlayerManager {
         final String cacheResult = CACHED_THROTTLING_PARAMETERS.get(
                 obfuscatedThrottlingParameter);
         if (cacheResult != null) {
-            // If the throttling parameter function has been already ran on the throttling parameter
-            // of the current streaming URL, replace directly the obfuscated throttling parameter
-            // with the cached result in the streaming URL
-            return streamingUrl.replace(obfuscatedThrottlingParameter, cacheResult);
+            if (isValidDeobfuscatedThrottlingParameter(
+                    obfuscatedThrottlingParameter, cacheResult)) {
+                // If the throttling parameter function has been already ran on the throttling
+                // parameter of the current streaming URL, replace directly the obfuscated
+                // throttling parameter with the cached result in the streaming URL.
+                return streamingUrl.replace(obfuscatedThrottlingParameter, cacheResult);
+            }
+
+            CACHED_THROTTLING_PARAMETERS.remove(obfuscatedThrottlingParameter);
         }
 
         extractJavaScriptCodeIfNeeded(videoId);
@@ -241,6 +246,47 @@ public final class YoutubeJavaScriptPlayerManager {
             throw throttlingDeobfFuncExtractionEx;
         }
 
+        try {
+            final String deobfuscatedThrottlingParameter =
+                    runThrottlingParameterDeobfuscation(obfuscatedThrottlingParameter);
+
+            CACHED_THROTTLING_PARAMETERS.put(
+                    obfuscatedThrottlingParameter, deobfuscatedThrottlingParameter);
+
+            // If the throttling parameter function has been already ran on the throttling parameter
+            // of the current streaming URL, replace directly the obfuscated throttling parameter
+            // with the cached result in the streaming URL
+            return streamingUrl.replace(
+                    obfuscatedThrottlingParameter, deobfuscatedThrottlingParameter);
+        } catch (final Exception e) {
+            throw new ParsingException(
+                    "Could not run throttling parameter deobfuscation JavaScript function", e);
+        }
+    }
+
+    @Nonnull
+    private static String runThrottlingParameterDeobfuscation(
+            @Nonnull final String obfuscatedThrottlingParameter) throws Exception {
+        try {
+            return runUnifiedThrottlingParameterDeobfuscation(obfuscatedThrottlingParameter);
+        } catch (final Exception unifiedException) {
+            cachedUnifiedSolverCode = null;
+            unifiedSolverAvailable = false;
+            JavaScript.clearCachedScope();
+
+            try {
+                return runLegacyThrottlingParameterDeobfuscation(
+                        obfuscatedThrottlingParameter);
+            } catch (final Exception legacyException) {
+                legacyException.addSuppressed(unifiedException);
+                throw legacyException;
+            }
+        }
+    }
+
+    @Nonnull
+    private static String runUnifiedThrottlingParameterDeobfuscation(
+            @Nonnull final String obfuscatedThrottlingParameter) throws Exception {
         // Try the unified solver approach first (for newer YouTube player versions where the
         // standalone n-parameter function no longer exists)
         if (cachedUnifiedSolverCode == null && !unifiedSolverAvailable
@@ -254,7 +300,23 @@ public final class YoutubeJavaScriptPlayerManager {
             }
         }
 
-        // Fall back to old regex-based approach if unified solver is not available
+        if (!unifiedSolverAvailable) {
+            throw new ParsingException("Unified throttling parameter solver is not available");
+        }
+
+        final String deobfuscatedThrottlingParameter = JavaScript.runCached(
+                cachedUnifiedSolverCode,
+                YoutubeUnifiedSolverUtils.SOLVER_FUNCTION_NAME,
+                obfuscatedThrottlingParameter);
+        assertValidDeobfuscatedThrottlingParameter(
+                obfuscatedThrottlingParameter, deobfuscatedThrottlingParameter);
+        return deobfuscatedThrottlingParameter;
+    }
+
+    @Nonnull
+    private static String runLegacyThrottlingParameterDeobfuscation(
+            @Nonnull final String obfuscatedThrottlingParameter) throws Exception {
+        // Fall back to old regex-based approach if unified solver is not available or failed
         if (!unifiedSolverAvailable && cachedThrottlingDeobfuscationFunction == null) {
             try {
                 cachedThrottlingDeobfuscationFunctionName =
@@ -277,33 +339,31 @@ public final class YoutubeJavaScriptPlayerManager {
             }
         }
 
-        try {
-            final String deobfuscatedThrottlingParameter;
-            if (unifiedSolverAvailable) {
-                deobfuscatedThrottlingParameter = JavaScript.runCached(
-                        cachedUnifiedSolverCode,
-                        YoutubeUnifiedSolverUtils.SOLVER_FUNCTION_NAME,
-                        obfuscatedThrottlingParameter);
-            } else {
-                deobfuscatedThrottlingParameter = JavaScript.run(
-                        cachedThrottlingDeobfuscationFunction,
-                        cachedThrottlingDeobfuscationFunctionName,
-                        obfuscatedThrottlingParameter);
-            }
+        final String deobfuscatedThrottlingParameter = JavaScript.run(
+                cachedThrottlingDeobfuscationFunction,
+                cachedThrottlingDeobfuscationFunctionName,
+                obfuscatedThrottlingParameter);
+        assertValidDeobfuscatedThrottlingParameter(
+                obfuscatedThrottlingParameter, deobfuscatedThrottlingParameter);
+        return deobfuscatedThrottlingParameter;
+    }
 
-            if (isNullOrEmpty(deobfuscatedThrottlingParameter)) {
-                throw new IllegalStateException("Extracted n-parameter is empty");
-            }
-
-            CACHED_THROTTLING_PARAMETERS.put(
-                    obfuscatedThrottlingParameter, deobfuscatedThrottlingParameter);
-
-            return streamingUrl.replace(
-                    obfuscatedThrottlingParameter, deobfuscatedThrottlingParameter);
-        } catch (final Exception e) {
-            throw new ParsingException(
-                    "Could not run throttling parameter deobfuscation JavaScript function", e);
+    private static void assertValidDeobfuscatedThrottlingParameter(
+            @Nonnull final String obfuscatedThrottlingParameter,
+            @Nullable final String deobfuscatedThrottlingParameter) {
+        if (isNullOrEmpty(deobfuscatedThrottlingParameter)) {
+            throw new IllegalStateException("Extracted n-parameter is empty");
         }
+        if (obfuscatedThrottlingParameter.equals(deobfuscatedThrottlingParameter)) {
+            throw new IllegalStateException("Extracted n-parameter is unchanged");
+        }
+    }
+
+    private static boolean isValidDeobfuscatedThrottlingParameter(
+            @Nonnull final String obfuscatedThrottlingParameter,
+            @Nullable final String deobfuscatedThrottlingParameter) {
+        return !isNullOrEmpty(deobfuscatedThrottlingParameter)
+                && !obfuscatedThrottlingParameter.equals(deobfuscatedThrottlingParameter);
     }
 
     /**
