@@ -1054,6 +1054,12 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 || hasPlayableFormats(androidStreamingData)
                 || hasPlayableFormats(androidVrStreamingData)
                 || hasPlayableFormats(iosStreamingData);
+        ytLog("onFetchPage.summary videoId=" + videoId
+                + " html5=" + hasPlayableFormats(html5StreamingData)
+                + " android=" + hasPlayableFormats(androidStreamingData)
+                + " androidVr=" + hasPlayableFormats(androidVrStreamingData)
+                + " ios=" + hasPlayableFormats(iosStreamingData)
+                + " anyFormats=" + anyFormats);
         if (!anyFormats
                 && (isAgeRestrictedPlayerResponse(playerResponse)
                     || isAgeRestrictedPlayerResponse(androidPlayerResponse)
@@ -1090,6 +1096,26 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 throw new ContentNotAvailableException(unplayableReason);
             }
         }
+    }
+
+    // Lightweight debug logging for the stream-extraction path. Goes to stderr, which on
+    // Android is mirrored into logcat (tag "System.err"), so it can be captured with
+    // `adb logcat | grep YTSTREAMLOG` while reproducing the slow-loading issue.
+    // TODO: comment this out / remove once the degraded-extraction root cause is fully fixed.
+    private static void ytLog(final String message) {
+        // Debug logging used to diagnose the SABR / degraded-stream issue (YouTube serving
+        // adaptive formats without a "url"/"signatureCipher" for ANDROID_VR clientVersion>1.65,
+        // which dropped all audio + video-only streams and left only the progressive 360p).
+        // Commented out but kept — together with every call site — for future use.
+        // Uncomment the line below (and capture with `adb logcat | grep YTSTREAMLOG`) to re-enable.
+        // System.err.println("YTSTREAMLOG [" + Thread.currentThread().getName() + "] " + message);
+    }
+
+    private static String streamingDataDiag(final JsonObject streamingData, final String key) {
+        if (streamingData == null) {
+            return "NULL";
+        }
+        return "size=" + streamingData.getArray(key).size();
     }
 
     @Nullable
@@ -1320,25 +1346,20 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             final JsonObject androidResponse = YoutubeStreamHelper.getAndroidPlayerResponse(
                     contentCountry, localization, videoId, androidCpn, androidPoTokenResult);
 
-            final String androidResponseVideoId = androidResponse
-                    .getObject("videoDetails").getString("videoId");
             final String androidStatus = androidResponse
                     .getObject(PLAYABILITY_STATUS).getString("status");
-            // System.err.println("YoutubeStreamExtractor: fetchAndroidClient"
-            //         + " requestedVideoId=" + videoId
-            //         + " responseVideoId=" + androidResponseVideoId
-            //         + " status=" + androidStatus
-            //         + " isNotValid=" + isPlayerResponseNotValid(androidResponse, videoId));
+            ytLog("fetchAndroidClient.response status=" + androidStatus
+                    + " hasPot=" + (androidPoTokenResult != null)
+                    + " isNotValid=" + isPlayerResponseNotValid(androidResponse, videoId));
 
             if (!isPlayerResponseNotValid(androidResponse, videoId)) {
                 this.androidPlayerResponse = androidResponse;
                 androidStreamingData = androidResponse.getObject(STREAMING_DATA);
-                // System.err.println("YoutubeStreamExtractor: fetchAndroidClient"
-                //         + " androidStreamingData isNull=" + (androidStreamingData == null)
-                //         + " formats=" + (androidStreamingData != null
-                //             ? androidStreamingData.getArray("formats").size() : -1)
-                //         + " adaptiveFormats=" + (androidStreamingData != null
-                //             ? androidStreamingData.getArray("adaptiveFormats").size() : -1));
+                ytLog("fetchAndroidClient.streamingData"
+                        + " formats=" + (androidStreamingData != null
+                            ? androidStreamingData.getArray("formats").size() : -1)
+                        + " adaptiveFormats=" + (androidStreamingData != null
+                            ? androidStreamingData.getArray("adaptiveFormats").size() : -1));
 
                 if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
                     playerCaptionsTracklistRenderer =
@@ -1350,9 +1371,11 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                     androidStreamingUrlsPoToken = androidPoTokenResult.streamingDataPoToken;
                 }
             }
-        } catch (final Exception ignored) {
+        } catch (final Exception e) {
             // Ignore exceptions related to ANDROID client fetch or parsing, as it is not
             // compulsory to play contents
+            ytLog("fetchAndroidClient.failed "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 
@@ -1365,25 +1388,19 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             final JsonObject vrPlayerResponse = YoutubeStreamHelper.getAndroidVrPlayerResponse(
                     contentCountry, localization, videoId, androidVrCpn);
 
-            final String vrResponseVideoId = vrPlayerResponse
-                    .getObject("videoDetails").getString("videoId");
             final String vrStatus = vrPlayerResponse
                     .getObject(PLAYABILITY_STATUS).getString("status");
-            // System.err.println("YoutubeStreamExtractor: fetchAndroidVrClient"
-            //         + " requestedVideoId=" + videoId
-            //         + " responseVideoId=" + vrResponseVideoId
-            //         + " status=" + vrStatus
-            //         + " isNotValid=" + isPlayerResponseNotValid(vrPlayerResponse, videoId));
+            ytLog("fetchAndroidVrClient.response status=" + vrStatus
+                    + " isNotValid=" + isPlayerResponseNotValid(vrPlayerResponse, videoId));
 
             if (!isPlayerResponseNotValid(vrPlayerResponse, videoId)) {
                 this.androidVrPlayerResponse = vrPlayerResponse;
                 androidVrStreamingData = vrPlayerResponse.getObject(STREAMING_DATA);
-                // System.err.println("YoutubeStreamExtractor: fetchAndroidVrClient"
-                //         + " androidVrStreamingData isNull=" + (androidVrStreamingData == null)
-                //         + " formats=" + (androidVrStreamingData != null
-                //             ? androidVrStreamingData.getArray("formats").size() : -1)
-                //         + " adaptiveFormats=" + (androidVrStreamingData != null
-                //             ? androidVrStreamingData.getArray("adaptiveFormats").size() : -1));
+                ytLog("fetchAndroidVrClient.streamingData"
+                        + " formats=" + (androidVrStreamingData != null
+                            ? androidVrStreamingData.getArray("formats").size() : -1)
+                        + " adaptiveFormats=" + (androidVrStreamingData != null
+                            ? androidVrStreamingData.getArray("adaptiveFormats").size() : -1));
 
                 if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
                     playerCaptionsTracklistRenderer =
@@ -1392,9 +1409,11 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 }
                 // No poToken needed for ANDROID_VR
             }
-        } catch (final Exception ignored) {
+        } catch (final Exception e) {
             // Ignore exceptions related to ANDROID_VR client fetch or parsing, as it is not
             // compulsory to play contents (falls back to ANDROID client)
+            ytLog("fetchAndroidVrClient.failed "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 
@@ -1547,49 +1566,65 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             final String videoId = getId();
             final List<T> streamList = new ArrayList<>();
 
-            java.util.stream.Stream.of(
-                    /*
-                    Use androidVrStreamingData first as the primary streaming source.
-                    ANDROID_VR (Oculus Quest 3) requires no poTokens and is the most
-                    reliable client for streaming.
+            ytLog("getItags.entry type=" + streamTypeExceptionMessage
+                    + " key=" + streamingDataKey
+                    + " vr=" + streamingDataDiag(androidVrStreamingData, streamingDataKey)
+                    + " android=" + streamingDataDiag(androidStreamingData, streamingDataKey)
+                    + " html5=" + streamingDataDiag(html5StreamingData, streamingDataKey)
+                    + " ios=" + streamingDataDiag(iosStreamingData, streamingDataKey));
 
-                    The androidStreamingData is used as a fallback (requires poToken).
+            /*
+            Use androidVrStreamingData first as the primary streaming source.
+            ANDROID_VR (Oculus Quest 3) requires no poTokens and is the most
+            reliable client for streaming.
 
-                    The html5StreamingData is only set for age-restricted content (from the
-                    WEB_EMBEDDED_PLAYER client) and is used as a further fallback.
+            The androidStreamingData is used as a fallback (requires poToken).
 
-                    As iOS streaming data is affected by poTokens and not passing them should lead
-                    to 403 responses, it should be used as the last resort.
-                     */
-                    new Pair<>(androidVrStreamingData,
-                            new Pair<>(androidVrCpn, (String) null)),
-                    new Pair<>(androidStreamingData,
-                            new Pair<>(androidCpn, androidStreamingUrlsPoToken)),
-                    new Pair<>(html5StreamingData,
-                            new Pair<>(html5Cpn, html5StreamingUrlsPoToken)),
-                    new Pair<>(iosStreamingData,
-                            new Pair<>(iosCpn, iosStreamingUrlsPoToken)))
-                    .flatMap(pair -> getStreamsFromStreamingDataKey(
-                            videoId,
-                            pair.getFirst(),
-                            streamingDataKey,
-                            itagTypeWanted,
-                            pair.getSecond().getFirst(),
-                            pair.getSecond().getSecond()))
-                    .map(streamBuilderHelper)
-                    .forEachOrdered(stream -> {
-                        if (!Stream.containSimilarStream(stream, streamList)) {
-                            streamList.add(stream);
-                        }
-                    });
+            The html5StreamingData is only set for age-restricted content (from the
+            WEB_EMBEDDED_PLAYER client) and is used as a further fallback.
 
-            // System.err.println("YoutubeStreamExtractor: getItags"
-            //         + " type=" + streamTypeExceptionMessage
-            //         + " count=" + streamList.size());
+            As iOS streaming data is affected by poTokens and not passing them should lead
+            to 403 responses, it should be used as the last resort.
+
+            NOTE: this used to be a Stream.of(...).flatMap(...).map(...).forEachOrdered(...)
+            pipeline, but the lazy java.util.stream evaluation silently dropped every
+            adaptive stream (the inner flatMap stream's elements never reached the terminal
+            collector, so audio/video-only lists came back empty -> "degraded" 360p only).
+            Replaced with explicit iteration, which is also much easier to follow.
+            */
+            final List<Pair<JsonObject, Pair<String, String>>> clientStreamingData =
+                    java.util.Arrays.asList(
+                            new Pair<>(androidVrStreamingData,
+                                    new Pair<>(androidVrCpn, (String) null)),
+                            new Pair<>(androidStreamingData,
+                                    new Pair<>(androidCpn, androidStreamingUrlsPoToken)),
+                            new Pair<>(html5StreamingData,
+                                    new Pair<>(html5Cpn, html5StreamingUrlsPoToken)),
+                            new Pair<>(iosStreamingData,
+                                    new Pair<>(iosCpn, iosStreamingUrlsPoToken)));
+
+            for (final Pair<JsonObject, Pair<String, String>> pair : clientStreamingData) {
+                final List<ItagInfo> itagInfos = getStreamsFromStreamingDataKey(
+                        videoId,
+                        pair.getFirst(),
+                        streamingDataKey,
+                        itagTypeWanted,
+                        pair.getSecond().getFirst(),
+                        pair.getSecond().getSecond());
+                for (final ItagInfo itagInfo : itagInfos) {
+                    final T stream = streamBuilderHelper.apply(itagInfo);
+                    if (!Stream.containSimilarStream(stream, streamList)) {
+                        streamList.add(stream);
+                    }
+                }
+            }
+
+            ytLog("getItags.success type=" + streamTypeExceptionMessage
+                    + " count=" + streamList.size());
             return streamList;
         } catch (final Exception e) {
-            // System.err.println("YoutubeStreamExtractor: getItags FAILED"
-            //         + " type=" + streamTypeExceptionMessage + " err=" + e.getMessage());
+            ytLog("getItags.FAILED type=" + streamTypeExceptionMessage
+                    + " err=" + e.getClass().getSimpleName() + ": " + e.getMessage());
             throw new ParsingException(
                     "Could not get " + streamTypeExceptionMessage + " streams", e);
         }
@@ -1709,34 +1744,56 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     }
 
     @Nonnull
-    private java.util.stream.Stream<ItagInfo> getStreamsFromStreamingDataKey(
+    private List<ItagInfo> getStreamsFromStreamingDataKey(
             final String videoId,
             final JsonObject streamingData,
             final String streamingDataKey,
             @Nonnull final ItagItem.ItagType itagTypeWanted,
             @Nonnull final String contentPlaybackNonce,
             @Nullable final String poToken) {
+        final List<ItagInfo> result = new ArrayList<>();
         if (streamingData == null || !streamingData.has(streamingDataKey)) {
-            return java.util.stream.Stream.empty();
+            return result;
         }
 
-        return streamingData.getArray(streamingDataKey).stream()
-                .filter(JsonObject.class::isInstance)
-                .map(JsonObject.class::cast)
-                .map(formatData -> {
-                    try {
-                        final ItagItem itagItem = ItagItem.getItag(formatData.getInt("itag"));
-                        if (itagItem.itagType == itagTypeWanted) {
-                            return buildAndAddItagInfoToList(videoId, formatData, itagItem,
-                                    itagItem.itagType, contentPlaybackNonce, poToken);
-                        }
-                    } catch (final ExtractionException ignored) {
-                        // If the itag is not supported, the n parameter of HTML5 clients cannot be
-                        // decoded or buildAndAddItagInfoToList fails, we end up here
+        for (final Object entry : streamingData.getArray(streamingDataKey)) {
+            if (!(entry instanceof JsonObject)) {
+                continue;
+            }
+            final JsonObject formatData = (JsonObject) entry;
+            final int rawItag = formatData.getInt("itag");
+            try {
+                final ItagItem itagItem = ItagItem.getItag(rawItag);
+                if (itagItem.itagType == itagTypeWanted) {
+                    final ItagInfo info = buildAndAddItagInfoToList(videoId, formatData,
+                            itagItem, itagItem.itagType, contentPlaybackNonce, poToken);
+                    if (info == null) {
+                        // buildAndAddItagInfoToList returns null when the format has neither a
+                        // direct "url" nor a cipher/signatureCipher to build a stream URL from.
+                        ytLog("getStreams.buildNull key=" + streamingDataKey
+                                + " type=" + itagTypeWanted + " itag=" + rawItag
+                                + " cpn=" + contentPlaybackNonce
+                                + " hasPot=" + (poToken != null)
+                                + " keys=" + formatData.keySet());
+                        continue;
                     }
-                    return null;
-                })
-                .filter(Objects::nonNull);
+                    ytLog("getStreams.kept key=" + streamingDataKey
+                            + " type=" + itagTypeWanted + " itag=" + rawItag
+                            + " cpn=" + contentPlaybackNonce
+                            + " hasPot=" + (poToken != null));
+                    result.add(info);
+                }
+            } catch (final ExtractionException e) {
+                // If the itag is not supported, the n parameter of HTML5 clients cannot be
+                // decoded or buildAndAddItagInfoToList fails, we end up here.
+                ytLog("getStreams.dropped key=" + streamingDataKey
+                        + " type=" + itagTypeWanted + " itag=" + rawItag
+                        + " cpn=" + contentPlaybackNonce
+                        + " hasPot=" + (poToken != null)
+                        + " err=" + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        }
+        return result;
     }
 
     private ItagInfo buildAndAddItagInfoToList(
@@ -1759,9 +1816,15 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             }
 
             final var cipher = Parser.compatParseMap(cipherString);
-            final String signature = YoutubeJavaScriptPlayerManager.deobfuscateSignature(videoId,
-                    cipher.getOrDefault("s", ""));
-            streamUrl = cipher.get("url") + "&" + cipher.get("sp") + "=" + signature;
+            try {
+                final String signature = YoutubeJavaScriptPlayerManager.deobfuscateSignature(
+                        videoId, cipher.getOrDefault("s", ""));
+                streamUrl = cipher.get("url") + "&" + cipher.get("sp") + "=" + signature;
+            } catch (final ExtractionException e) {
+                ytLog("deobfuscateSignature.failed itag=" + itagItem.id
+                        + " err=" + e.getClass().getSimpleName() + ": " + e.getMessage());
+                throw e;
+            }
         }
 
         // Decode the n parameter if it is present
@@ -1770,8 +1833,14 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         // Exceptions thrown by
         // YoutubeJavaScriptPlayerManager.getUrlWithThrottlingParameterDeobfuscated are so
         // propagated to the parent which ignores streams in this case
-        streamUrl = YoutubeJavaScriptPlayerManager.getUrlWithThrottlingParameterDeobfuscated(
-                videoId, streamUrl);
+        try {
+            streamUrl = YoutubeJavaScriptPlayerManager.getUrlWithThrottlingParameterDeobfuscated(
+                    videoId, streamUrl);
+        } catch (final ExtractionException e) {
+            ytLog("nParamDeobfuscation.failed itag=" + itagItem.id
+                    + " err=" + e.getClass().getSimpleName() + ": " + e.getMessage());
+            throw e;
+        }
 
         // Add the content playback nonce to the stream URL
         streamUrl += "&" + CPN + "=" + contentPlaybackNonce;

@@ -116,7 +116,13 @@ final class ClientsConstants {
 
     static final String ANDROID_VR_CLIENT_ID = "28";
     static final String ANDROID_VR_CLIENT_NAME = "ANDROID_VR";
-    static final String ANDROID_VR_CLIENT_VERSION = "1.71.26";
+    // Do NOT bump above 1.65.x: with an ANDROID_VR clientVersion > 1.65 YouTube returns
+    // SABR-only adaptive formats (entries without a "url" or "signatureCipher"), so every
+    // audio/video-only stream gets dropped and only the progressive 360p (itag 18) survives,
+    // which manifests as very long buffering then low-quality playback.
+    // yt-dlp pins the same 1.65.10 for this exact reason (see yt-dlp _base.py "android_vr":
+    // "Using a clientVersion>1.65 may return SABR streams only").
+    static final String ANDROID_VR_CLIENT_VERSION = "1.65.10";
     static final String ANDROID_VR_DEVICE_MAKE = "Oculus";
     static final String ANDROID_VR_DEVICE_MODEL = "Quest 3";
     static final String ANDROID_VR_OS_VERSION = "12L";
