@@ -101,6 +101,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 import java.util.stream.Collectors;
 
 import javax.annotation.Nonnull;
@@ -138,6 +140,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     private JsonObject playerCaptionsTracklistRenderer;
     private int ageLimit = -1;
     private StreamType streamType;
+    private long ytTraceStartNanos;
 
     // We need to store the contentPlaybackNonces because we need to append them to videoplayback
     // URLs (with the cpn parameter).
@@ -1012,7 +1015,9 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     @Override
     public void onFetchPage(@Nonnull final Downloader downloader)
             throws IOException, ExtractionException {
+        ytTraceStartNanos = System.nanoTime();
         final String videoId = getId();
+        ytLog("onFetchPage.start videoId=" + videoId);
 
         final Localization localization = getExtractorLocalization();
         final ContentCountry contentCountry = getExtractorContentCountry();
@@ -1020,32 +1025,66 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         final PoTokenProvider poTokenProviderInstance = poTokenProvider;
         final boolean noPoTokenProviderSet = poTokenProviderInstance == null;
 
-        fetchHtml5Client(localization, contentCountry, videoId, poTokenProviderInstance);
+        final FutureTask<JsonObject> nextResponseTask =
+                fetchNextResponseAsync(localization, contentCountry, videoId);
 
+        // The player-client fetches are independent network requests writing to separate
+        // response fields, so we run them concurrently instead of one after another. This turns
+        // the extractor's network cost from the SUM of every client into the slowest single one.
+        // Only the HTML5/WEB client populates the metadata fields (playerResponse,
+        // playerMicroFormatRenderer) that setStreamType() and the metadata getters need, so we
+        // join it first. The ANDROID_VR and ANDROID clients swallow their own exceptions, so the
+        // tasks below never throw; only the HTML5 task can surface an ExtractionException.
+        final long html5Start = System.nanoTime();
+        final FutureTask<Void> html5Task = runAsync("YoutubeStreamExtractor-html5", () -> {
+            fetchHtml5Client(localization, contentCountry, videoId, poTokenProviderInstance);
+            ytLogStep("fetchHtml5Client", html5Start);
+            return null;
+        });
+
+        // ANDROID_VR requires no poToken and is the most reliable client.
+        final long androidVrStart = System.nanoTime();
+        final FutureTask<Void> androidVrTask = runAsync("YoutubeStreamExtractor-androidVr", () -> {
+            fetchAndroidVrClient(localization, contentCountry, videoId);
+            ytLogStep("fetchAndroidVrClient", androidVrStart);
+            return null;
+        });
+
+        // Join HTML5 first (it can throw and provides the metadata setStreamType() needs).
+        awaitTask(html5Task);
         setStreamType();
+        ytLog("setStreamType type=" + streamType);
 
-        // Try ANDROID_VR first - it requires no poTokens and is the most reliable
-        fetchAndroidVrClient(localization, contentCountry, videoId);
+        awaitTask(androidVrTask);
 
-        final PoTokenResult androidPoTokenResult = noPoTokenProviderSet ? null
-                : poTokenProviderInstance.getAndroidClientPoToken(videoId);
+        // ANDROID_VR already returns playable streams and needs no poToken. The plain ANDROID
+        // client only adds a few extra format variants, but it requires the WebView-backed
+        // poToken (often the single slowest step of the whole extraction). So we only fall back
+        // to the ANDROID (and optionally IOS) client when ANDROID_VR did not yield playable
+        // formats, keeping the expensive poToken round trip off the common-case critical path.
+        if (!hasPlayableFormats(androidVrStreamingData)) {
+            ytLog("androidVr.noFormats fallback=android");
+            final long androidStart = System.nanoTime();
+            final long androidPoTokenStart = System.nanoTime();
+            final PoTokenResult androidPoTokenResult = noPoTokenProviderSet ? null
+                    : poTokenProviderInstance.getAndroidClientPoToken(videoId);
+            ytLogStep("getAndroidClientPoToken hasToken=" + (androidPoTokenResult != null),
+                    androidPoTokenStart);
+            fetchAndroidClient(localization, contentCountry, videoId, androidPoTokenResult);
+            ytLogStep("fetchAndroidClient", androidStart);
 
-        fetchAndroidClient(localization, contentCountry, videoId, androidPoTokenResult);
-
-        if (fetchIosClient) {
-            final PoTokenResult iosPoTokenResult = noPoTokenProviderSet ? null
-                    : poTokenProviderInstance.getIosClientPoToken(videoId);
-            fetchIosClient(localization, contentCountry, videoId, iosPoTokenResult);
+            if (fetchIosClient && !hasPlayableFormats(androidStreamingData)) {
+                final long iosStart = System.nanoTime();
+                final PoTokenResult iosPoTokenResult = noPoTokenProviderSet ? null
+                        : poTokenProviderInstance.getIosClientPoToken(videoId);
+                fetchIosClient(localization, contentCountry, videoId, iosPoTokenResult);
+                ytLogStep("fetchIosClient", iosStart);
+            }
+        } else {
+            ytLog("androidVr.hasFormats skipping=android");
         }
 
-        final byte[] nextBody = JsonWriter.string(
-                prepareDesktopJsonBuilder(localization, contentCountry)
-                        .value(VIDEO_ID, videoId)
-                        .value(CONTENT_CHECK_OK, true)
-                        .value(RACY_CHECK_OK, true)
-                        .done())
-                .getBytes(StandardCharsets.UTF_8);
-        nextResponse = getJsonPostResponse(NEXT, nextBody, localization);
+        nextResponse = waitForNextResponse(nextResponseTask);
 
         // If no client returned any playable formats and at least one client reported an
         // age-related LOGIN_REQUIRED status, surface it as an AgeRestrictedContentException
@@ -1098,17 +1137,108 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         }
     }
 
+    private FutureTask<JsonObject> fetchNextResponseAsync(@Nonnull final Localization localization,
+                                                          @Nonnull final ContentCountry contentCountry,
+                                                          @Nonnull final String videoId) {
+        final long nextStart = System.nanoTime();
+        final FutureTask<JsonObject> task = new FutureTask<>(() -> {
+            try {
+                final JsonObject response = fetchNextResponse(localization, contentCountry, videoId);
+                ytLogStep("fetchNext", nextStart);
+                return response;
+            } catch (final Exception e) {
+                ytLogStep("fetchNext.failed " + e.getClass().getSimpleName(), nextStart);
+                throw e;
+            }
+        });
+        final Thread thread = new Thread(task, "YoutubeStreamExtractor-next");
+        thread.start();
+        return task;
+    }
+
+    private JsonObject fetchNextResponse(@Nonnull final Localization localization,
+                                         @Nonnull final ContentCountry contentCountry,
+                                         @Nonnull final String videoId)
+            throws IOException, ExtractionException {
+        final byte[] nextBody = JsonWriter.string(
+                prepareDesktopJsonBuilder(localization, contentCountry)
+                        .value(VIDEO_ID, videoId)
+                        .value(CONTENT_CHECK_OK, true)
+                        .value(RACY_CHECK_OK, true)
+                        .done())
+                .getBytes(StandardCharsets.UTF_8);
+        return getJsonPostResponse(NEXT, nextBody, localization);
+    }
+
+    private JsonObject waitForNextResponse(@Nonnull final FutureTask<JsonObject> nextResponseTask)
+            throws IOException, ExtractionException {
+        try {
+            return nextResponseTask.get();
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while fetching YouTube next response", e);
+        } catch (final ExecutionException e) {
+            final Throwable cause = e.getCause();
+            if (cause instanceof IOException) {
+                throw (IOException) cause;
+            } else if (cause instanceof ExtractionException) {
+                throw (ExtractionException) cause;
+            } else if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            }
+            throw new ExtractionException("Could not fetch YouTube next response", cause);
+        }
+    }
+
+    /**
+     * Runs a player-client fetch on its own thread so the independent client requests in
+     * {@link #onFetchPage(Downloader)} overlap instead of running sequentially.
+     */
+    private static FutureTask<Void> runAsync(@Nonnull final String threadName,
+                                             @Nonnull final java.util.concurrent.Callable<Void> work) {
+        final FutureTask<Void> task = new FutureTask<>(work);
+        final Thread thread = new Thread(task, threadName);
+        thread.start();
+        return task;
+    }
+
+    /**
+     * Joins a fetch task started with {@link #runAsync}, unwrapping the checked exceptions the
+     * fetch may have thrown so the caller sees the same exception types as a direct call would.
+     */
+    private void awaitTask(@Nonnull final FutureTask<Void> task)
+            throws IOException, ExtractionException {
+        try {
+            task.get();
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while fetching YouTube player response", e);
+        } catch (final ExecutionException e) {
+            final Throwable cause = e.getCause();
+            if (cause instanceof IOException) {
+                throw (IOException) cause;
+            } else if (cause instanceof ExtractionException) {
+                throw (ExtractionException) cause;
+            } else if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            }
+            throw new ExtractionException("Could not fetch YouTube player response", cause);
+        }
+    }
+
     // Lightweight debug logging for the stream-extraction path. Goes to stderr, which on
     // Android is mirrored into logcat (tag "System.err"), so it can be captured with
     // `adb logcat | grep YTSTREAMLOG` while reproducing the slow-loading issue.
     // TODO: comment this out / remove once the degraded-extraction root cause is fully fixed.
     private static void ytLog(final String message) {
-        // Debug logging used to diagnose the SABR / degraded-stream issue (YouTube serving
-        // adaptive formats without a "url"/"signatureCipher" for ANDROID_VR clientVersion>1.65,
-        // which dropped all audio + video-only streams and left only the progressive 360p).
-        // Commented out but kept — together with every call site — for future use.
-        // Uncomment the line below (and capture with `adb logcat | grep YTSTREAMLOG`) to re-enable.
-        // System.err.println("YTSTREAMLOG [" + Thread.currentThread().getName() + "] " + message);
+        System.err.println("YTSTREAMLOG [" + Thread.currentThread().getName() + "] " + message);
+    }
+
+    private void ytLogStep(@Nonnull final String step, final long stepStartNanos) {
+        final long now = System.nanoTime();
+        final long totalMs = (now - ytTraceStartNanos) / 1_000_000L;
+        final long stepMs = (now - stepStartNanos) / 1_000_000L;
+        ytLog("timing +" + totalMs + "ms step=" + step + " durationMs=" + stepMs);
     }
 
     private static String streamingDataDiag(final JsonObject streamingData, final String key) {
@@ -1993,7 +2123,24 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
     @Nullable
     private String getStoryboardsRendererSpec() {
-        String spec = getStoryboardsRendererSpecFrom(playerResponse);
+        // The WEB metadata response (playerResponse) is requested with
+        // "&$fields=microformat,videoDetails" for speed, so it no longer carries "storyboards".
+        // ANDROID_VR is the primary streaming client now and its response is a *full* player
+        // response, so it is the reliable storyboard source. Check it (and the other full mobile
+        // responses) before falling back to the metadata WEB response. Without this the seekbar
+        // preview thumbnails are empty (getFrames() returns nothing). See OPTIMIZATIONS.md.
+        // Diagnostic that pinned down the empty-seekbar-preview bug (commented out to avoid noise,
+        // kept for future use — re-enable to see which client responses carry "storyboards"):
+        // ytLog("storyboards.sources"
+        //         + " web=" + hasStoryboards(playerResponse)
+        //         + " androidVr=" + hasStoryboards(androidVrPlayerResponse)
+        //         + " android=" + hasStoryboards(androidPlayerResponse)
+        //         + " ios=" + hasStoryboards(iosPlayerResponse));
+        String spec = getStoryboardsRendererSpecFrom(androidVrPlayerResponse);
+        if (spec != null) {
+            return spec;
+        }
+        spec = getStoryboardsRendererSpecFrom(playerResponse);
         if (spec != null) {
             return spec;
         }
@@ -2002,6 +2149,10 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             return spec;
         }
         return getStoryboardsRendererSpecFrom(iosPlayerResponse);
+    }
+
+    private static boolean hasStoryboards(@Nullable final JsonObject response) {
+        return response != null && response.has("storyboards");
     }
 
     @Nullable

@@ -47,6 +47,13 @@ public final class YoutubeStreamHelper {
     private YoutubeStreamHelper() {
     }
 
+    // Lightweight timing log mirrored into logcat (tag "System.err") so the visitorData fetch
+    // and player POST of each client can be measured separately with
+    // `adb logcat | grep YTSTREAMLOG`. Comment out once startup profiling is done.
+    private static void hlog(final String message) {
+        System.err.println("YTSTREAMLOG [" + Thread.currentThread().getName() + "] " + message);
+    }
+
     @Nonnull
     public static JsonObject getWebMetadataPlayerResponse(
             @Nonnull final Localization localization,
@@ -60,9 +67,11 @@ public final class YoutubeStreamHelper {
 
         // We must always pass a valid visitorData to get valid player responses, which needs to be
         // got from YouTube
+        final long vdStart = System.nanoTime();
         innertubeClientRequestInfo.clientInfo.visitorData =
                 YoutubeParsingHelper.getVisitorDataFromInnertube(innertubeClientRequestInfo,
                         localization, contentCountry, headers, YOUTUBEI_V1_URL, null, false);
+        hlog("web.visitorData durationMs=" + (System.nanoTime() - vdStart) / 1_000_000L);
 
         final JsonBuilder<JsonObject> builder = prepareJsonBuilder(localization, contentCountry,
                 innertubeClientRequestInfo, null);
@@ -78,9 +87,12 @@ public final class YoutubeStreamHelper {
         final String url = YOUTUBEI_V1_URL + PLAYER + "?" + DISABLE_PRETTY_PRINT_PARAMETER
                 + "&$fields=microformat,videoDetails";
 
-        return JsonUtils.toJsonObject(getValidJsonResponseBody(
+        final long postStart = System.nanoTime();
+        final JsonObject result = JsonUtils.toJsonObject(getValidJsonResponseBody(
                 getDownloader().postWithContentTypeJson(
                         url, headers, body, localization)));
+        hlog("web.playerPost durationMs=" + (System.nanoTime() - postStart) / 1_000_000L);
+        return result;
     }
 
     @Nonnull
@@ -177,9 +189,11 @@ public final class YoutubeStreamHelper {
                 getMobileClientHeaders(getAndroidVrUserAgent(localization));
 
         // We must always pass a valid visitorData to get valid player responses.
+        final long vdStart = System.nanoTime();
         innertubeClientRequestInfo.clientInfo.visitorData =
                 YoutubeParsingHelper.getVisitorDataFromInnertube(innertubeClientRequestInfo,
                         localization, contentCountry, headers, YOUTUBEI_V1_GAPIS_URL, null, false);
+        hlog("androidVr.visitorData durationMs=" + (System.nanoTime() - vdStart) / 1_000_000L);
 
         final JsonBuilder<JsonObject> builder = prepareJsonBuilder(localization, contentCountry,
                 innertubeClientRequestInfo, null);
@@ -194,8 +208,11 @@ public final class YoutubeStreamHelper {
         final String url = YOUTUBEI_V1_GAPIS_URL + PLAYER + "?" + DISABLE_PRETTY_PRINT_PARAMETER
                 + "&t=" + generateTParameter() + "&id=" + videoId;
 
-        return JsonUtils.toJsonObject(getValidJsonResponseBody(
+        final long postStart = System.nanoTime();
+        final JsonObject result = JsonUtils.toJsonObject(getValidJsonResponseBody(
                 getDownloader().postWithContentTypeJson(url, headers, body, localization)));
+        hlog("androidVr.playerPost durationMs=" + (System.nanoTime() - postStart) / 1_000_000L);
+        return result;
     }
 
     public static JsonObject getAndroidReelPlayerResponse(
