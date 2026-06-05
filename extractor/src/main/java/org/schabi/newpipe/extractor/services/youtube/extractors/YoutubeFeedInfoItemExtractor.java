@@ -39,8 +39,18 @@ public class YoutubeFeedInfoItemExtractor implements StreamInfoItemExtractor {
 
     @Override
     public long getViewCount() {
-        return Long.parseLong(entryElement.getElementsByTag("media:statistics").first()
-                .attr("views"));
+        // media:statistics is absent for some entries (e.g. currently-live or just-published
+        // streams). Return -1 (unknown) instead of throwing, so a single such entry does not fail
+        // the whole feed extraction.
+        final Element statistics = entryElement.getElementsByTag("media:statistics").first();
+        if (statistics == null) {
+            return -1;
+        }
+        try {
+            return Long.parseLong(statistics.attr("views"));
+        } catch (final NumberFormatException e) {
+            return -1;
+        }
     }
 
     @Override
