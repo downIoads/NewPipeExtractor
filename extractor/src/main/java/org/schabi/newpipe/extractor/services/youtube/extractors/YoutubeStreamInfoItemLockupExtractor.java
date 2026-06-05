@@ -45,6 +45,12 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
     // This approach is language dependant (en-GB)
     // Leading end space is voluntary included
     private static final String PREMIERES_TEXT = "Premieres ";
+    // YouTube labels upcoming/scheduled livestreams (waiting room, not yet started) with this
+    // prefix followed by an absolute date in the same format as premieres, e.g.
+    // "Scheduled for 06/06/2026, 16:00". Like premieres, this is NOT a relative "x ago" string,
+    // so it must NOT be fed into TimeAgoParser (doing so throws ParsingException, which poisons
+    // the whole channel-tab/feed load and surfaces as "Not loaded: N" on feed refresh).
+    private static final String SCHEDULED_TEXT = "Scheduled for ";
     private static final DateTimeFormatter PREMIERES_DATE_FORMATTER =
             DateTimeFormatter.ofPattern("dd/MM/yyyy, HH:mm");
 
@@ -145,7 +151,7 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
         // Duration cannot be extracted for live streams, but only for normal videos
         // Exact duration cannot be extracted for premieres, an approximation is only available in
         // accessibility context label
-        if (isLive() || isPremiere()) {
+        if (isLive() || isUpcoming()) {
             return -1;
         }
 
@@ -265,18 +271,20 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
         // Date string might be null e.g. for live streams
         final Optional<String> dateText = getDateText();
 
-        if (isPremiere()) {
-            return getDateFromPremiere(dateText);
+        final Optional<String> upcomingPrefix = upcomingDatePrefix();
+        if (upcomingPrefix.isPresent()) {
+            return getDateFromUpcoming(dateText, upcomingPrefix.get());
         }
 
         return dateText.orElse(null);
     }
 
     @Nullable
-    private String getDateFromPremiere(final Optional<String> dateText) {
+    private String getDateFromUpcoming(final Optional<String> dateText, final String prefix) {
         // This approach is language dependent
-        // Remove the premieres text from the upload date metadata part
-        return dateText.map(str -> str.replace(PREMIERES_TEXT, ""))
+        // Remove the premieres/scheduled prefix from the upload date metadata part, leaving the
+        // absolute date (e.g. "06/06/2026, 16:00")
+        return dateText.map(str -> str.replace(prefix, ""))
                         .orElse(null);
     }
 
@@ -293,18 +301,19 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
             return null;
         }
 
-        if (isPremiere()) {
-            final String premiereDate = getDateFromPremiere(getDateText());
-            if (premiereDate == null) {
-                throw new ParsingException("Could not get upload date from premiere");
+        final Optional<String> upcomingPrefix = upcomingDatePrefix();
+        if (upcomingPrefix.isPresent()) {
+            final String upcomingDate = getDateFromUpcoming(getDateText(), upcomingPrefix.get());
+            if (upcomingDate == null) {
+                throw new ParsingException("Could not get upload date from upcoming stream");
             }
 
             try {
                 // As we request a UTC offset of 0 minutes, we get the UTC date
-                final var dateTime = LocalDateTime.parse(premiereDate, PREMIERES_DATE_FORMATTER);
+                final var dateTime = LocalDateTime.parse(upcomingDate, PREMIERES_DATE_FORMATTER);
                 return new DateWrapper(dateTime.atZone(ZoneOffset.UTC).toInstant(), false);
             } catch (final DateTimeParseException e) {
-                throw new ParsingException("Could not parse premiere upload date", e);
+                throw new ParsingException("Could not parse upcoming stream upload date", e);
             }
         }
 
@@ -313,8 +322,9 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
 
     @Override
     public long getViewCount() throws ParsingException {
-        if (isPremiere()) {
-            // The number of people returned for premieres is the one currently waiting
+        if (isUpcoming()) {
+            // The number of people returned for premieres/scheduled streams is the one currently
+            // waiting
             return -1;
         }
 
@@ -441,10 +451,27 @@ public class YoutubeStreamInfoItemLockupExtractor implements StreamInfoItemExtra
         return cachedMetadataRows.size() <= 1 ? 0 : 1;
     }
 
-    private boolean isPremiere() throws ParsingException {
-        return getDateText().map(dateText -> dateText.contains(PREMIERES_TEXT))
-                // If we can't get date text, assume it is not a premiere, it should be a livestream
-                .orElse(false);
+    /**
+     * Returns the matched upcoming-date prefix ({@link #PREMIERES_TEXT} or {@link #SCHEDULED_TEXT})
+     * if the date text describes an upcoming stream (premiere or scheduled livestream), otherwise
+     * empty. Both expose an absolute future start date in {@link #PREMIERES_DATE_FORMATTER} format
+     * instead of a relative "x ago" string.
+     */
+    private Optional<String> upcomingDatePrefix() throws ParsingException {
+        return getDateText().flatMap(dateText -> {
+            if (dateText.contains(PREMIERES_TEXT)) {
+                return Optional.of(PREMIERES_TEXT);
+            }
+            if (dateText.contains(SCHEDULED_TEXT)) {
+                return Optional.of(SCHEDULED_TEXT);
+            }
+            return Optional.empty();
+        });
+    }
+
+    private boolean isUpcoming() throws ParsingException {
+        // If we can't get date text, assume it is not upcoming, it should be a livestream
+        return upcomingDatePrefix().isPresent();
     }
 
     abstract static class ChannelImageViewModel {
