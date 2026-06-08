@@ -640,12 +640,17 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         assertPageFetched();
 
         // There is no DASH manifest available with the iOS client.
-        // Prefer Android client, fall back to HTML5 (only set for age-restricted embed).
+        // Prefer Android client, fall back to HTML5 (only set for age-restricted embed) and
+        // finally to ANDROID_VR. ANDROID_VR is the only client we fetch on the common live-stream
+        // path (the WEB client is metadata-only and ANDROID/iOS are skipped when ANDROID_VR
+        // already yielded formats), and its player response does carry the live DASH manifest URL,
+        // so it must be consulted or live streams end up with no manifest at all.
         return getManifestUrl(
                 "dash",
                 Arrays.asList(
                         new Pair<>(androidStreamingData, androidStreamingUrlsPoToken),
-                        new Pair<>(html5StreamingData, html5StreamingUrlsPoToken)),
+                        new Pair<>(html5StreamingData, html5StreamingUrlsPoToken),
+                        new Pair<>(androidVrStreamingData, null)),
                 // Return version 7 of the DASH manifest, which is the latest one, reducing
                 // manifest size and allowing playback with some DASH players
                 "mpd_version=7");
@@ -660,13 +665,18 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         // returned has separated audio and video streams and poTokens requirement do not seem to
         // impact HLS formats (if a poToken is provided, it is added)
         // Also, on videos, non-iOS clients don't have an HLS manifest URL in their player response
-        // unless a Safari macOS user agent is used
+        // unless a Safari macOS user agent is used.
+        // ANDROID_VR is added last as the fallback that actually applies on the common live-stream
+        // path: it is usually the only client fetched (WEB is metadata-only, ANDROID/iOS are
+        // skipped once ANDROID_VR yields formats) and its player response carries the live HLS
+        // manifest URL.
         return getManifestUrl(
                 "hls",
                 Arrays.asList(
                         new Pair<>(iosStreamingData, iosStreamingUrlsPoToken),
                         new Pair<>(androidStreamingData, androidStreamingUrlsPoToken),
-                        new Pair<>(html5StreamingData, html5StreamingUrlsPoToken)),
+                        new Pair<>(html5StreamingData, html5StreamingUrlsPoToken),
+                        new Pair<>(androidVrStreamingData, null)),
                 "");
     }
 
@@ -1099,6 +1109,15 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 + " androidVr=" + hasPlayableFormats(androidVrStreamingData)
                 + " ios=" + hasPlayableFormats(iosStreamingData)
                 + " anyFormats=" + anyFormats);
+        ytLog("onFetchPage.manifests videoId=" + videoId
+                + " html5[hls=" + manifestDiag(html5StreamingData, "hls")
+                + ",dash=" + manifestDiag(html5StreamingData, "dash") + "]"
+                + " android[hls=" + manifestDiag(androidStreamingData, "hls")
+                + ",dash=" + manifestDiag(androidStreamingData, "dash") + "]"
+                + " androidVr[hls=" + manifestDiag(androidVrStreamingData, "hls")
+                + ",dash=" + manifestDiag(androidVrStreamingData, "dash") + "]"
+                + " ios[hls=" + manifestDiag(iosStreamingData, "hls")
+                + ",dash=" + manifestDiag(iosStreamingData, "dash") + "]");
         if (!anyFormats
                 && (isAgeRestrictedPlayerResponse(playerResponse)
                     || isAgeRestrictedPlayerResponse(androidPlayerResponse)
@@ -1246,6 +1265,15 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             return "NULL";
         }
         return "size=" + streamingData.getArray(key).size();
+    }
+
+    // Diagnostic: report whether a streamingData object carries a live HLS/DASH manifest URL.
+    private static String manifestDiag(final JsonObject streamingData, final String manifestType) {
+        if (streamingData == null) {
+            return "NULL";
+        }
+        final String url = streamingData.getString(manifestType + "ManifestUrl");
+        return isNullOrEmpty(url) ? "missing" : "PRESENT";
     }
 
     @Nullable
