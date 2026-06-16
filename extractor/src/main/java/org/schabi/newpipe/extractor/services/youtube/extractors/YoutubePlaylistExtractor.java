@@ -46,6 +46,7 @@ public class YoutubePlaylistExtractor extends PlaylistExtractor {
     private static final String PLAYLIST_VIDEO_RENDERER = "playlistVideoRenderer";
     private static final String RICH_ITEM_RENDERER = "richItemRenderer";
     private static final String REEL_ITEM_RENDERER = "reelItemRenderer";
+    private static final String LOCKUP_VIEW_MODEL = "lockupViewModel";
     private static final String SIDEBAR = "sidebar";
     private static final String HEADER = "header";
     private static final String VIDEO_OWNER_RENDERER = "videoOwnerRenderer";
@@ -507,24 +508,40 @@ public class YoutubePlaylistExtractor extends PlaylistExtractor {
                 continuationObject = continuationEndpoint;
             }
 
-            final String continuation = continuationObject.getObject("continuationCommand")
-                    .getString("token");
+            return getContinuationPageFromToken(continuationObject
+                    .getObject("continuationCommand")
+                    .getString("token"));
+        }
 
-            if (isNullOrEmpty(continuation)) {
-                // Invalid continuation or no continuation found
-                return null;
-            }
-
-            final byte[] body = JsonWriter.string(prepareDesktopJsonBuilder(
-                            getExtractorLocalization(), getExtractorContentCountry())
-                            .value("continuation", continuation)
-                            .done())
-                    .getBytes(StandardCharsets.UTF_8);
-
-            return new Page(YOUTUBEI_V1_URL + "browse?" + DISABLE_PRETTY_PRINT_PARAMETER, body);
+        if (lastElement.has("continuationItemViewModel")) {
+            // Newer playlist responses (lockupViewModel format) wrap the continuation token in a
+            // continuationItemViewModel instead of a continuationItemRenderer.
+            return getContinuationPageFromToken(lastElement
+                    .getObject("continuationItemViewModel")
+                    .getObject("continuationCommand")
+                    .getObject("innertubeCommand")
+                    .getObject("continuationCommand")
+                    .getString("token"));
         }
 
         return null;
+    }
+
+    @Nullable
+    private Page getContinuationPageFromToken(@Nullable final String continuation)
+            throws IOException, ExtractionException {
+        if (isNullOrEmpty(continuation)) {
+            // Invalid continuation or no continuation found
+            return null;
+        }
+
+        final byte[] body = JsonWriter.string(prepareDesktopJsonBuilder(
+                        getExtractorLocalization(), getExtractorContentCountry())
+                        .value("continuation", continuation)
+                        .done())
+                .getBytes(StandardCharsets.UTF_8);
+
+        return new Page(YOUTUBEI_V1_URL + "browse?" + DISABLE_PRETTY_PRINT_PARAMETER, body);
     }
 
     private void collectStreamsFrom(@Nonnull final StreamInfoItemsCollector collector,
@@ -546,6 +563,16 @@ public class YoutubePlaylistExtractor extends PlaylistExtractor {
                                 collector.commit(new YoutubeReelInfoItemExtractor(
                                         richItemRendererContent.getObject(REEL_ITEM_RENDERER)));
                             }
+                        }
+                    } else if (video.has(LOCKUP_VIEW_MODEL)) {
+                        // Since ~2024 YouTube returns playlist items as lockupViewModels
+                        // (the same format used in search results) instead of
+                        // playlistVideoRenderers.
+                        final JsonObject lockupViewModel = video.getObject(LOCKUP_VIEW_MODEL);
+                        if ("LOCKUP_CONTENT_TYPE_VIDEO".equals(
+                                lockupViewModel.getString("contentType"))) {
+                            collector.commit(new YoutubeStreamInfoItemLockupExtractor(
+                                    lockupViewModel, timeAgoParser));
                         }
                     }
                 });
