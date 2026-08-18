@@ -1,6 +1,7 @@
 package org.schabi.newpipe.extractor.services.youtube;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -41,6 +42,18 @@ public class YoutubeParsingHelperTest implements InitYoutubeTest {
                 YoutubeParsingHelper.extractCachedUrlIfNeeded("https://webcache.googleusercontent.com/search?q=cache:https://mohfw.gov.in/"));
         assertEquals("https://www.infektionsschutz.de/coronavirus-sars-cov-2.html",
                 YoutubeParsingHelper.extractCachedUrlIfNeeded("https://www.infektionsschutz.de/coronavirus-sars-cov-2.html"));
+    }
+
+    @Test
+    void testVisionOsStreamingUrlIsNotMisclassifiedAsAnotherClient() {
+        final String url = "https://rr.example.googlevideo.com/videoplayback?itag=303"
+                + "&c=VISIONOS&cpn=test";
+
+        assertTrue(YoutubeParsingHelper.isVisionOsStreamingUrl(url));
+        assertFalse(YoutubeParsingHelper.isAndroidStreamingUrl(url));
+        assertFalse(YoutubeParsingHelper.isAndroidVrStreamingUrl(url));
+        assertFalse(YoutubeParsingHelper.isIosStreamingUrl(url));
+        assertFalse(YoutubeParsingHelper.isWebStreamingUrl(url));
     }
 
     @Test

@@ -32,6 +32,7 @@ import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getClientHeaders;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getClientVersion;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getIosUserAgent;
+import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getVisionOsUserAgent;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getOriginReferrerHeaders;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getValidJsonResponseBody;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getYouTubeHeaders;
@@ -213,6 +214,37 @@ public final class YoutubeStreamHelper {
                 getDownloader().postWithContentTypeJson(url, headers, body, localization)));
         hlog("androidVr.playerPost durationMs=" + (System.nanoTime() - postStart) / 1_000_000L);
         return result;
+    }
+
+    /**
+     * Get a player response from the VISIONOS client. This client is intentionally tokenless:
+     * unlike ANDROID_VR, its HTTPS formats remain directly playable as of August 2026.
+     */
+    public static JsonObject getVisionOsPlayerResponse(
+            @Nonnull final ContentCountry contentCountry,
+            @Nonnull final Localization localization,
+            @Nonnull final String videoId,
+            @Nonnull final String cpn)
+            throws IOException, ExtractionException {
+        final InnertubeClientRequestInfo requestInfo =
+                InnertubeClientRequestInfo.ofVisionOsClient();
+        final Map<String, List<String>> headers =
+                getMobileClientHeaders(getVisionOsUserAgent());
+
+        requestInfo.clientInfo.visitorData =
+                YoutubeParsingHelper.getVisitorDataFromInnertube(requestInfo,
+                        localization, contentCountry, headers, YOUTUBEI_V1_GAPIS_URL, null, false);
+
+        final JsonBuilder<JsonObject> builder = prepareJsonBuilder(localization, contentCountry,
+                requestInfo, null);
+        addVideoIdCpnAndOkChecks(builder, videoId, cpn);
+
+        final byte[] body = JsonWriter.string(builder.done()).getBytes(StandardCharsets.UTF_8);
+        final String url = YOUTUBEI_V1_GAPIS_URL + PLAYER + "?" + DISABLE_PRETTY_PRINT_PARAMETER
+                + "&t=" + generateTParameter() + "&id=" + videoId;
+
+        return JsonUtils.toJsonObject(getValidJsonResponseBody(
+                getDownloader().postWithContentTypeJson(url, headers, body, localization)));
     }
 
     public static JsonObject getAndroidReelPlayerResponse(

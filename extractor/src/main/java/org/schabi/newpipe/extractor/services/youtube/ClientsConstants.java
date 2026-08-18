@@ -127,4 +127,15 @@ final class ClientsConstants {
     static final String ANDROID_VR_DEVICE_MODEL = "Quest 3";
     static final String ANDROID_VR_OS_VERSION = "12L";
     static final int ANDROID_VR_SDK_VERSION = 32;
+
+    // VISIONOS (Apple Vision Pro) client fields. Unlike ANDROID_VR, this client still returns
+    // directly playable HTTPS formats without a GVS poToken as of August 2026.
+    static final String VISIONOS_CLIENT_ID = "101";
+    static final String VISIONOS_CLIENT_NAME = "VISIONOS";
+    static final String VISIONOS_CLIENT_VERSION = "1.02";
+    static final String VISIONOS_DEVICE_MAKE = "Apple";
+    static final String VISIONOS_DEVICE_MODEL = "RealityDevice17,1";
+    static final String VISIONOS_OS_VERSION = "26.5.23O471";
+    static final String VISIONOS_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) "
+            + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 }

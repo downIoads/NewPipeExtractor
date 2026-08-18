@@ -3,10 +3,12 @@ package org.schabi.newpipe.extractor.services.youtube.dashmanifestcreators;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getAndroidUserAgent;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getAndroidVrUserAgent;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getIosUserAgent;
+import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getVisionOsUserAgent;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getOriginReferrerHeaders;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isAndroidStreamingUrl;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isAndroidVrStreamingUrl;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isIosStreamingUrl;
+import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isVisionOsStreamingUrl;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isWebStreamingUrl;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.isWebEmbeddedPlayerStreamingUrl;
 import static org.schabi.newpipe.extractor.utils.Utils.isNullOrEmpty;
@@ -609,6 +611,7 @@ public final class YoutubeDashManifestCreatorsUtils {
         final boolean isAndroidStreamingUrl = isAndroidStreamingUrl(baseStreamingUrl);
         final boolean isIosStreamingUrl = isIosStreamingUrl(baseStreamingUrl);
         final boolean isAndroidVrStreamingUrl = isAndroidVrStreamingUrl(baseStreamingUrl);
+        final boolean isVisionOsStreamingUrl = isVisionOsStreamingUrl(baseStreamingUrl);
         // System.err.println("getInitializationResponse: isHtml5=" + isHtml5StreamingUrl
         //         + " isAndroid=" + isAndroidStreamingUrl
         //         + " isIos=" + isIosStreamingUrl
@@ -657,6 +660,8 @@ public final class YoutubeDashManifestCreatorsUtils {
             headers.put("Range", List.of("bytes=0-0"));
             if (isAndroidVrStreamingUrl) {
                 headers.put("User-Agent", List.of(getAndroidVrUserAgent(null)));
+            } else if (isVisionOsStreamingUrl) {
+                headers.put("User-Agent", List.of(getVisionOsUserAgent()));
             }
             // System.err.println("getInitializationResponse: range-GET path client="
             //         + (isAndroidVrStreamingUrl ? "ANDROID_VR" : "UNKNOWN"));

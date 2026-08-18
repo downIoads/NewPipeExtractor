@@ -126,11 +126,15 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     @Nullable
     private JsonObject androidVrStreamingData;
     @Nullable
+    private JsonObject visionOsStreamingData;
+    @Nullable
     private JsonObject html5StreamingData;
     @Nullable
     private JsonObject androidPlayerResponse;
     @Nullable
     private JsonObject androidVrPlayerResponse;
+    @Nullable
+    private JsonObject visionOsPlayerResponse;
     @Nullable
     private JsonObject iosPlayerResponse;
 
@@ -149,6 +153,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     private String iosCpn;
     private String androidCpn;
     private String androidVrCpn;
+    private String visionOsCpn;
     private String html5Cpn;
 
     @Nullable
@@ -345,7 +350,8 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             return Long.parseLong(duration);
         } catch (final Exception e) {
             return getDurationFromFirstAdaptiveFormat(Arrays.asList(
-                    androidStreamingData, html5StreamingData, iosStreamingData));
+                    visionOsStreamingData, androidStreamingData, html5StreamingData,
+                    iosStreamingData));
         }
     }
 
@@ -641,16 +647,13 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
         // There is no DASH manifest available with the iOS client.
         // Prefer Android client, fall back to HTML5 (only set for age-restricted embed) and
-        // finally to ANDROID_VR. ANDROID_VR is the only client we fetch on the common live-stream
-        // path (the WEB client is metadata-only and ANDROID/iOS are skipped when ANDROID_VR
-        // already yielded formats), and its player response does carry the live DASH manifest URL,
-        // so it must be consulted or live streams end up with no manifest at all.
+        // finally to VISIONOS, the tokenless primary streaming client.
         return getManifestUrl(
                 "dash",
                 Arrays.asList(
                         new Pair<>(androidStreamingData, androidStreamingUrlsPoToken),
                         new Pair<>(html5StreamingData, html5StreamingUrlsPoToken),
-                        new Pair<>(androidVrStreamingData, null)),
+                        new Pair<>(visionOsStreamingData, null)),
                 // Return version 7 of the DASH manifest, which is the latest one, reducing
                 // manifest size and allowing playback with some DASH players
                 "mpd_version=7");
@@ -666,17 +669,14 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         // impact HLS formats (if a poToken is provided, it is added)
         // Also, on videos, non-iOS clients don't have an HLS manifest URL in their player response
         // unless a Safari macOS user agent is used.
-        // ANDROID_VR is added last as the fallback that actually applies on the common live-stream
-        // path: it is usually the only client fetched (WEB is metadata-only, ANDROID/iOS are
-        // skipped once ANDROID_VR yields formats) and its player response carries the live HLS
-        // manifest URL.
+        // VISIONOS is added last as the tokenless fallback used on the common path.
         return getManifestUrl(
                 "hls",
                 Arrays.asList(
                         new Pair<>(iosStreamingData, iosStreamingUrlsPoToken),
                         new Pair<>(androidStreamingData, androidStreamingUrlsPoToken),
                         new Pair<>(html5StreamingData, html5StreamingUrlsPoToken),
-                        new Pair<>(androidVrStreamingData, null)),
+                        new Pair<>(visionOsStreamingData, null)),
                 "");
     }
 
@@ -1052,11 +1052,12 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             return null;
         });
 
-        // ANDROID_VR requires no poToken and is the most reliable client.
-        final long androidVrStart = System.nanoTime();
-        final FutureTask<Void> androidVrTask = runAsync("YoutubeStreamExtractor-androidVr", () -> {
-            fetchAndroidVrClient(localization, contentCountry, videoId);
-            ytLogStep("fetchAndroidVrClient", androidVrStart);
+        // VISIONOS is the tokenless primary client. ANDROID_VR was removed here after YouTube
+        // began returning 403 for every one of its formats on 2026-08-17.
+        final long visionOsStart = System.nanoTime();
+        final FutureTask<Void> visionOsTask = runAsync("YoutubeStreamExtractor-visionOs", () -> {
+            fetchVisionOsClient(localization, contentCountry, videoId);
+            ytLogStep("fetchVisionOsClient", visionOsStart);
             return null;
         });
 
@@ -1065,15 +1066,15 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         setStreamType();
         ytLog("setStreamType type=" + streamType);
 
-        awaitTask(androidVrTask);
+        awaitTask(visionOsTask);
 
-        // ANDROID_VR already returns playable streams and needs no poToken. The plain ANDROID
+        // VISIONOS already returns playable streams and needs no poToken. The plain ANDROID
         // client only adds a few extra format variants, but it requires the WebView-backed
         // poToken (often the single slowest step of the whole extraction). So we only fall back
-        // to the ANDROID (and optionally IOS) client when ANDROID_VR did not yield playable
+        // to the ANDROID (and optionally IOS) client when VISIONOS did not yield playable
         // formats, keeping the expensive poToken round trip off the common-case critical path.
-        if (!hasPlayableFormats(androidVrStreamingData)) {
-            ytLog("androidVr.noFormats fallback=android");
+        if (!hasPlayableFormats(visionOsStreamingData)) {
+            ytLog("visionOs.noFormats fallback=android");
             final long androidStart = System.nanoTime();
             final long androidPoTokenStart = System.nanoTime();
             final PoTokenResult androidPoTokenResult = noPoTokenProviderSet ? null
@@ -1091,7 +1092,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 ytLogStep("fetchIosClient", iosStart);
             }
         } else {
-            ytLog("androidVr.hasFormats skipping=android");
+            ytLog("visionOs.hasFormats skipping=android");
         }
 
         nextResponse = waitForNextResponse(nextResponseTask);
@@ -1101,12 +1102,12 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         // so the UI can show a specific message instead of a generic parsing error.
         final boolean anyFormats = hasPlayableFormats(html5StreamingData)
                 || hasPlayableFormats(androidStreamingData)
-                || hasPlayableFormats(androidVrStreamingData)
+                || hasPlayableFormats(visionOsStreamingData)
                 || hasPlayableFormats(iosStreamingData);
         ytLog("onFetchPage.summary videoId=" + videoId
                 + " html5=" + hasPlayableFormats(html5StreamingData)
                 + " android=" + hasPlayableFormats(androidStreamingData)
-                + " androidVr=" + hasPlayableFormats(androidVrStreamingData)
+                + " visionOs=" + hasPlayableFormats(visionOsStreamingData)
                 + " ios=" + hasPlayableFormats(iosStreamingData)
                 + " anyFormats=" + anyFormats);
         ytLog("onFetchPage.manifests videoId=" + videoId
@@ -1114,14 +1115,14 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 + ",dash=" + manifestDiag(html5StreamingData, "dash") + "]"
                 + " android[hls=" + manifestDiag(androidStreamingData, "hls")
                 + ",dash=" + manifestDiag(androidStreamingData, "dash") + "]"
-                + " androidVr[hls=" + manifestDiag(androidVrStreamingData, "hls")
-                + ",dash=" + manifestDiag(androidVrStreamingData, "dash") + "]"
+                + " visionOs[hls=" + manifestDiag(visionOsStreamingData, "hls")
+                + ",dash=" + manifestDiag(visionOsStreamingData, "dash") + "]"
                 + " ios[hls=" + manifestDiag(iosStreamingData, "hls")
                 + ",dash=" + manifestDiag(iosStreamingData, "dash") + "]");
         if (!anyFormats
                 && (isAgeRestrictedPlayerResponse(playerResponse)
                     || isAgeRestrictedPlayerResponse(androidPlayerResponse)
-                    || isAgeRestrictedPlayerResponse(androidVrPlayerResponse)
+                    || isAgeRestrictedPlayerResponse(visionOsPlayerResponse)
                     || isAgeRestrictedPlayerResponse(iosPlayerResponse))) {
             throw new AgeRestrictedContentException(
                     "This age-restricted video cannot be watched anonymously");
@@ -1149,20 +1150,22 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         // specific exceptions above (age-restricted, scheduled) to win when applicable.
         if (!anyFormats) {
             final String unplayableReason = firstUnplayableReason(playerResponse,
-                    androidPlayerResponse, androidVrPlayerResponse, iosPlayerResponse);
+                    visionOsPlayerResponse, androidPlayerResponse, iosPlayerResponse);
             if (unplayableReason != null) {
                 throw new ContentNotAvailableException(unplayableReason);
             }
         }
     }
 
-    private FutureTask<JsonObject> fetchNextResponseAsync(@Nonnull final Localization localization,
-                                                          @Nonnull final ContentCountry contentCountry,
-                                                          @Nonnull final String videoId) {
+    private FutureTask<JsonObject> fetchNextResponseAsync(
+            @Nonnull final Localization localization,
+            @Nonnull final ContentCountry contentCountry,
+            @Nonnull final String videoId) {
         final long nextStart = System.nanoTime();
         final FutureTask<JsonObject> task = new FutureTask<>(() -> {
             try {
-                final JsonObject response = fetchNextResponse(localization, contentCountry, videoId);
+                final JsonObject response = fetchNextResponse(
+                        localization, contentCountry, videoId);
                 ytLogStep("fetchNext", nextStart);
                 return response;
             } catch (final Exception e) {
@@ -1213,8 +1216,9 @@ public class YoutubeStreamExtractor extends StreamExtractor {
      * Runs a player-client fetch on its own thread so the independent client requests in
      * {@link #onFetchPage(Downloader)} overlap instead of running sequentially.
      */
-    private static FutureTask<Void> runAsync(@Nonnull final String threadName,
-                                             @Nonnull final java.util.concurrent.Callable<Void> work) {
+    private static FutureTask<Void> runAsync(
+            @Nonnull final String threadName,
+            @Nonnull final java.util.concurrent.Callable<Void> work) {
         final FutureTask<Void> task = new FutureTask<>(work);
         final Thread thread = new Thread(task, threadName);
         thread.start();
@@ -1575,6 +1579,29 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         }
     }
 
+    private void fetchVisionOsClient(@Nonnull final Localization localization,
+                                     @Nonnull final ContentCountry contentCountry,
+                                     @Nonnull final String videoId) {
+        try {
+            visionOsCpn = generateContentPlaybackNonce();
+            final JsonObject response = YoutubeStreamHelper.getVisionOsPlayerResponse(
+                    contentCountry, localization, videoId, visionOsCpn);
+
+            if (!isPlayerResponseNotValid(response, videoId)) {
+                visionOsPlayerResponse = response;
+                visionOsStreamingData = response.getObject(STREAMING_DATA);
+                if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
+                    playerCaptionsTracklistRenderer = response.getObject(CAPTIONS)
+                            .getObject(PLAYER_CAPTIONS_TRACKLIST_RENDERER);
+                }
+            }
+        } catch (final Exception e) {
+            // The Android client below remains the fallback if VISIONOS changes or is unavailable.
+            ytLog("fetchVisionOsClient.failed "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
     private void fetchIosClient(@Nonnull final Localization localization,
                                 @Nonnull final ContentCountry contentCountry,
                                 @Nonnull final String videoId,
@@ -1726,15 +1753,13 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
             ytLog("getItags.entry type=" + streamTypeExceptionMessage
                     + " key=" + streamingDataKey
-                    + " vr=" + streamingDataDiag(androidVrStreamingData, streamingDataKey)
+                    + " visionOs=" + streamingDataDiag(visionOsStreamingData, streamingDataKey)
                     + " android=" + streamingDataDiag(androidStreamingData, streamingDataKey)
                     + " html5=" + streamingDataDiag(html5StreamingData, streamingDataKey)
                     + " ios=" + streamingDataDiag(iosStreamingData, streamingDataKey));
 
             /*
-            Use androidVrStreamingData first as the primary streaming source.
-            ANDROID_VR (Oculus Quest 3) requires no poTokens and is the most
-            reliable client for streaming.
+            Use visionOsStreamingData first as the primary tokenless streaming source.
 
             The androidStreamingData is used as a fallback (requires poToken).
 
@@ -1752,8 +1777,8 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             */
             final List<Pair<JsonObject, Pair<String, String>>> clientStreamingData =
                     java.util.Arrays.asList(
-                            new Pair<>(androidVrStreamingData,
-                                    new Pair<>(androidVrCpn, (String) null)),
+                            new Pair<>(visionOsStreamingData,
+                                    new Pair<>(visionOsCpn, (String) null)),
                             new Pair<>(androidStreamingData,
                                     new Pair<>(androidCpn, androidStreamingUrlsPoToken)),
                             new Pair<>(html5StreamingData,
@@ -2153,7 +2178,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     private String getStoryboardsRendererSpec() {
         // The WEB metadata response (playerResponse) is requested with
         // "&$fields=microformat,videoDetails" for speed, so it no longer carries "storyboards".
-        // ANDROID_VR is the primary streaming client now and its response is a *full* player
+        // VISIONOS is the primary streaming client now and its response is a *full* player
         // response, so it is the reliable storyboard source. Check it (and the other full mobile
         // responses) before falling back to the metadata WEB response. Without this the seekbar
         // preview thumbnails are empty (getFrames() returns nothing). See OPTIMIZATIONS.md.
@@ -2164,7 +2189,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         //         + " androidVr=" + hasStoryboards(androidVrPlayerResponse)
         //         + " android=" + hasStoryboards(androidPlayerResponse)
         //         + " ios=" + hasStoryboards(iosPlayerResponse));
-        String spec = getStoryboardsRendererSpecFrom(androidVrPlayerResponse);
+        String spec = getStoryboardsRendererSpecFrom(visionOsPlayerResponse);
         if (spec != null) {
             return spec;
         }

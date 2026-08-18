@@ -25,6 +25,7 @@ import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.AND
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.ANDROID_VR_CLIENT_VERSION;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.DESKTOP_CLIENT_PLATFORM;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.IOS_CLIENT_VERSION;
+import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.VISIONOS_USER_AGENT;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.IOS_DEVICE_MODEL;
 import static org.schabi.newpipe.extractor.services.youtube.ClientsConstants.IOS_USER_AGENT_VERSION;
 
@@ -183,6 +184,7 @@ public final class YoutubeParsingHelper {
             Pattern.compile("&c=WEB_EMBEDDED_PLAYER");
     private static final Pattern C_ANDROID_PATTERN = Pattern.compile("&c=ANDROID(?!_)");
     private static final Pattern C_ANDROID_VR_PATTERN = Pattern.compile("&c=ANDROID_VR");
+    private static final Pattern C_VISIONOS_PATTERN = Pattern.compile("&c=VISIONOS");
     private static final Pattern C_IOS_PATTERN = Pattern.compile("&c=IOS");
     private static final Pattern TEXTUAL_DURATION_PART_PATTERN =
             Pattern.compile("(\\d+)\\s*(day|hour|minute|second)s?", Pattern.CASE_INSENSITIVE);
@@ -1153,6 +1155,16 @@ public final class YoutubeParsingHelper {
     }
 
     /**
+     * Get the user-agent string used by the YouTube visionOS client.
+     *
+     * @return the visionOS Safari user-agent
+     */
+    @Nonnull
+    public static String getVisionOsUserAgent() {
+        return VISIONOS_USER_AGENT;
+    }
+
+    /**
      * Get the user-agent string used as the user-agent for InnerTube requests with the iOS
      * client.
      *
@@ -1451,6 +1463,16 @@ public final class YoutubeParsingHelper {
      */
     public static boolean isAndroidVrStreamingUrl(@Nonnull final String url) {
         return Parser.isMatch(C_ANDROID_VR_PATTERN, url);
+    }
+
+    /**
+     * Check if the streaming URL is from the YouTube {@code VISIONOS} client.
+     *
+     * @param url the streaming URL to be checked
+     * @return true if it's a {@code VISIONOS} streaming URL, false otherwise
+     */
+    public static boolean isVisionOsStreamingUrl(@Nonnull final String url) {
+        return Parser.isMatch(C_VISIONOS_PATTERN, url);
     }
 
     /**
