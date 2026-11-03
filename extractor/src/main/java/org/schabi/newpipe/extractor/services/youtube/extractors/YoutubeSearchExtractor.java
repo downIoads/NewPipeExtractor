@@ -257,6 +257,26 @@ public class YoutubeSearchExtractor extends SearchExtractor {
                     collector.commit(new YoutubeStreamInfoItemLockupExtractor(
                             lockupViewModel, timeAgoParser));
                 }
+            } else if (item.has("gridShelfViewModel") && extractVideoResults) {
+                collectShortsFromGridShelf(collector,
+                        item.getObject("gridShelfViewModel"));
+            }
+        }
+    }
+
+    static void collectShortsFromGridShelf(
+            @Nonnull final MultiInfoItemsCollector collector,
+            @Nonnull final JsonObject gridShelfViewModel) {
+        JsonArray items = gridShelfViewModel.getArray("contents");
+        if (items.isEmpty()) {
+            items = gridShelfViewModel.getArray("items");
+        }
+
+        for (final Object item : items) {
+            if (item instanceof JsonObject
+                    && ((JsonObject) item).has("shortsLockupViewModel")) {
+                collector.commit(new YoutubeShortsLockupInfoItemExtractor(
+                        ((JsonObject) item).getObject("shortsLockupViewModel")));
             }
         }
     }
