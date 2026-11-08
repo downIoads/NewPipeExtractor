@@ -1142,6 +1142,19 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                             + " for a future release");
         }
 
+        // Preserve geographic restrictions reported by any client. Without this check, the
+        // final UNPLAYABLE fallback below turns the specific exception into a generic
+        // ContentNotAvailableException, hiding the actual reason from the UI.
+        if (!anyFormats
+                && (isGeographicallyRestrictedPlayerResponse(playerResponse)
+                    || isGeographicallyRestrictedPlayerResponse(androidPlayerResponse)
+                    || isGeographicallyRestrictedPlayerResponse(visionOsPlayerResponse)
+                    || isGeographicallyRestrictedPlayerResponse(iosPlayerResponse))) {
+            throw new GeographicRestrictionException(
+                    "This video is not available in the client's country",
+                    getAvailableCountries(playerResponse));
+        }
+
         // If no client returned any playable formats and at least one client reported an
         // UNPLAYABLE / ERROR status (e.g. private, removed, region-blocked, unlisted-and-
         // unavailable), surface it as a ContentNotAvailableException so the UI shows
@@ -1305,6 +1318,49 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 response.getObject(PLAYABILITY_STATUS).getString("status", ""));
     }
 
+    static boolean isGeographicallyRestrictedPlayerResponse(final JsonObject response) {
+        if (response == null) {
+            return false;
+        }
+        return isGeographicallyRestrictedPlayabilityStatus(
+                response.getObject(PLAYABILITY_STATUS));
+    }
+
+    private static boolean isGeographicallyRestrictedPlayabilityStatus(
+            @Nonnull final JsonObject playabilityStatus) {
+        final String status = playabilityStatus.getString("status", "");
+        if (!"UNPLAYABLE".equalsIgnoreCase(status)
+                && !"ERROR".equalsIgnoreCase(status)) {
+            return false;
+        }
+
+        final String reason = playabilityStatus.getString("reason", "");
+        final String detailedReason = getTextFromObject(playabilityStatus
+                .getObject("errorScreen")
+                .getObject("playerErrorMessageRenderer")
+                .getObject("subreason"));
+        return containsCountryRestriction(reason) || containsCountryRestriction(detailedReason);
+    }
+
+    private static boolean containsCountryRestriction(@Nullable final String reason) {
+        return reason != null && reason.toLowerCase(Locale.ROOT).contains("country");
+    }
+
+    static List<String> getAvailableCountries(final JsonObject response) {
+        if (response == null) {
+            return Collections.emptyList();
+        }
+        return response.getObject("microformat")
+                .getObject("playerMicroformatRenderer")
+                .getArray("availableCountries")
+                .stream()
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .filter(countryCode -> countryCode.length() == 2)
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
     private static boolean hasPlayableFormats(final JsonObject streamingData) {
         if (streamingData == null) {
             return false;
@@ -1325,7 +1381,8 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         return reason.contains("age") || reason.contains("inappropriate");
     }
 
-    private static void checkPlayabilityStatus(@Nonnull final JsonObject playabilityStatus)
+    private static void checkPlayabilityStatus(@Nonnull final JsonObject playabilityStatus,
+                                               @Nonnull final JsonObject playerResponse)
             throws ParsingException {
         final String status = playabilityStatus.getString("status");
         if (status == null || status.equalsIgnoreCase("ok")) {
@@ -1348,6 +1405,12 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
         if ((status.equalsIgnoreCase("unplayable") || status.equalsIgnoreCase("error"))
                 && reason != null) {
+            if (isGeographicallyRestrictedPlayabilityStatus(playabilityStatus)) {
+                throw new GeographicRestrictionException(
+                        "This video is not available in the client's country",
+                        getAvailableCountries(playerResponse));
+            }
+
             if (reason.contains("Music Premium")) {
                 throw new YoutubeMusicPremiumContentException();
             }
@@ -1368,7 +1431,8 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                         .getObject("subreason"));
                 if (detailedErrorMessage != null && detailedErrorMessage.contains("country")) {
                     throw new GeographicRestrictionException(
-                            "This video is not available in client's country.");
+                            "This video is not available in client's country.",
+                            getAvailableCountries(playerResponse));
                 } else {
                     throw new ContentNotAvailableException(
                             Objects.requireNonNullElse(detailedErrorMessage, reason));
@@ -1420,7 +1484,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                             : poTokenProviderInstance.getWebEmbedClientPoToken(videoId));
         } else {
             try {
-                checkPlayabilityStatus(playabilityStatus);
+                checkPlayabilityStatus(playabilityStatus, webPlayerResponse);
             } catch (final ContentNotAvailableException e) {
                 if (!isReloadErrorMessage(e.getMessage())
                         && !isReloadPlayabilityStatus(playabilityStatus)) {
@@ -1454,7 +1518,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             // will be thrown
             final JsonObject playabilityStatus = webPlayerResponse.getObject(PLAYABILITY_STATUS);
             try {
-                checkPlayabilityStatus(playabilityStatus);
+                checkPlayabilityStatus(playabilityStatus, webPlayerResponse);
             } catch (final ContentNotAvailableException e) {
                 if (isReloadErrorMessage(e.getMessage())
                         || isReloadPlayabilityStatus(playabilityStatus)) {
@@ -1484,7 +1548,8 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
         // Check if the playability status in the player response, if the age-restriction could not
         // be bypassed, an exception will be thrown
-        checkPlayabilityStatus(webEmbeddedPlayerResponse.getObject(PLAYABILITY_STATUS));
+        checkPlayabilityStatus(webEmbeddedPlayerResponse.getObject(PLAYABILITY_STATUS),
+                webEmbeddedPlayerResponse);
 
         if (isPlayerResponseNotValid(webEmbeddedPlayerResponse, videoId)) {
             throw new ExtractionException("WEB_EMBEDDED_PLAYER player response is not valid");
